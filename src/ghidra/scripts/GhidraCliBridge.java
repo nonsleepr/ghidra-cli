@@ -30,6 +30,10 @@ import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.*;
+import ghidra.program.model.pcode.PcodeOp;
+import ghidra.program.model.pcode.Varnode;
+import ghidra.program.model.pcode.PcodeOpAST;
+import ghidra.program.model.lang.Register;
 import ghidra.util.task.ConsoleTaskMonitor;
 import ghidra.util.task.TaskMonitor;
 
@@ -51,6 +55,10 @@ import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
+
+import ghidra.program.model.bookmark.Bookmark;
+import ghidra.program.model.bookmark.BookmarkManager;
+import ghidra.program.model.bookmark.BookmarkType;
 
 import java.io.*;
 import java.net.InetAddress;
@@ -234,6 +242,7 @@ public class GhidraCliBridge extends GhidraScript {
             case "type_get":        return handleTypeGet(args);
             case "type_create":     return handleTypeCreate(args);
             case "type_apply":      return handleTypeApply(args);
+<<<<<<< HEAD
             case "type_delete":     return handleTypeDelete(args);
             case "type_rename":     return handleTypeRename(args);
             case "type_create_enum": return handleTypeCreateEnum(args);
@@ -245,6 +254,17 @@ public class GhidraCliBridge extends GhidraScript {
             case "function_set_return_type": return handleFunctionSetReturnType(args);
             case "function_set_calling_convention": return handleFunctionSetCallingConvention(args);
             case "set_var_type":    return handleSetVarType(args);
+            // Bookmark commands
+            case "bookmark_list":    return handleBookmarkList(args);
+            case "bookmark_add":     return handleBookmarkAdd(args);
+            case "bookmark_delete":  return handleBookmarkDelete(args);
+            // PCode commands
+            case "pcode_at":         return handlePcodeAt(args);
+            case "pcode_function":   return handlePcodeFunction(args);
+            // Analysis commands
+            case "analyzer_list":    return handleAnalyzerList(args);
+            case "analyzer_set":     return handleAnalyzerSet(args);
+            case "analyze_run":      return handleAnalyzeRun(args);
             // Comment commands
             case "comment_list":    return handleCommentList(args);
             case "comment_get":     return handleCommentGet(args);
@@ -2709,6 +2729,392 @@ public class GhidraCliBridge extends GhidraScript {
             }
         } catch (Exception e) {
             return errorResult("Failed to set variable type: " + e.getMessage());
+        }
+    }
+
+    // --- PCode Handlers ---
+
+    private JsonObject handlePcodeAt(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+
+        String addrStr = getArgString(args, "address");
+        if (addrStr == null || addrStr.isEmpty()) return errorResult("address required");
+
+        try {
+            Address addr = resolveAddress(addrStr);
+            if (addr == null) {
+                return errorResult("Invalid address: " + addrStr);
+            }
+
+            Listing listing = currentProgram.getListing();
+            Instruction inst = listing.getInstructionAt(addr);
+            if (inst == null) {
+                return errorResult("No instruction at address: " + addrStr);
+            }
+
+            PcodeOp[] pcodeOps = inst.getPcode();
+            JsonArray ops = new JsonArray();
+            for (PcodeOp op : pcodeOps) {
+                ops.add(pcodeOpToJson(op));
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("address", addr.toString());
+            result.addProperty("mnemonic", inst.getMnemonicString());
+            result.addProperty("instruction", inst.toString());
+            result.addProperty("count", ops.size());
+            result.add("pcode", ops);
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to get PCode: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handlePcodeFunction(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+
+        String target = getArgString(args, "function");
+        boolean highPcode = args.has("high") && args.get("high").getAsBoolean();
+        if (target == null || target.isEmpty()) return errorResult("function name or address required");
+
+        try {
+            Function func = findFunctionByNameOrAddress(target);
+            if (func == null) {
+                return errorResult(buildFunctionTargetHint(target));
+            }
+
+            if (highPcode) {
+                DecompInterface decomp = new DecompInterface();
+                try {
+                    decomp.openProgram(currentProgram);
+                    DecompileResults results = decomp.decompileFunction(func, 30, new ConsoleTaskMonitor());
+                    if (!results.decompileCompleted()) {
+                        return errorResult("Decompilation failed for " + func.getName());
+                    }
+
+                    HighFunction hf = results.getHighFunction();
+                    Iterator<PcodeOpAST> it = hf.getPcodeOps();
+                    JsonArray ops = new JsonArray();
+                    while (it.hasNext()) {
+                        PcodeOpAST op = it.next();
+                        ops.add(pcodeOpToJson(op));
+                    }
+
+                    JsonObject result = new JsonObject();
+                    result.addProperty("function", func.getName());
+                    result.addProperty("address", func.getEntryPoint().toString());
+                    result.addProperty("level", "high");
+                    result.addProperty("count", ops.size());
+                    result.add("pcode", ops);
+                    return result;
+                } finally {
+                    decomp.dispose();
+                }
+            } else {
+                Listing listing = currentProgram.getListing();
+                ghidra.program.model.address.AddressSetView body = func.getBody();
+                InstructionIterator instIter = listing.getInstructions(body, true);
+
+                JsonArray ops = new JsonArray();
+                while (instIter.hasNext()) {
+                    Instruction inst = instIter.next();
+                    PcodeOp[] pcodeOps = inst.getPcode();
+                    for (PcodeOp op : pcodeOps) {
+                        JsonObject opJson = pcodeOpToJson(op);
+                        opJson.addProperty("instruction_address", inst.getAddress().toString());
+                        ops.add(opJson);
+                    }
+                }
+
+                JsonObject result = new JsonObject();
+                result.addProperty("function", func.getName());
+                result.addProperty("address", func.getEntryPoint().toString());
+                result.addProperty("level", "raw");
+                result.addProperty("count", ops.size());
+                result.add("pcode", ops);
+                return result;
+            }
+        } catch (Exception e) {
+            return errorResult("Failed to get function PCode: " + e.getMessage());
+        }
+    }
+
+    private JsonObject pcodeOpToJson(PcodeOp op) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("mnemonic", op.getMnemonic());
+        obj.addProperty("opcode", op.getOpcode());
+
+        Varnode output = op.getOutput();
+        if (output != null) {
+            obj.add("output", varnodeToJson(output));
+        } else {
+            obj.add("output", JsonNull.INSTANCE);
+        }
+
+        JsonArray inputs = new JsonArray();
+        for (int i = 0; i < op.getNumInputs(); i++) {
+            Varnode input = op.getInput(i);
+            inputs.add(varnodeToJson(input));
+        }
+        obj.add("inputs", inputs);
+
+        return obj;
+    }
+
+    private JsonObject varnodeToJson(Varnode vn) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("space", vn.getAddress().getAddressSpace().getName());
+        obj.addProperty("offset", "0x" + Long.toHexString(vn.getOffset()));
+        obj.addProperty("size", vn.getSize());
+        if (vn.isConstant()) {
+            obj.addProperty("type", "constant");
+        } else if (vn.isRegister()) {
+            obj.addProperty("type", "register");
+            Register reg = currentProgram.getRegister(vn);
+            if (reg != null) {
+                obj.addProperty("register", reg.getName());
+            }
+        } else if (vn.isUnique()) {
+            obj.addProperty("type", "unique");
+        } else if (vn.getAddress().isStackAddress()) {
+            obj.addProperty("type", "stack");
+        } else {
+            obj.addProperty("type", "ram");
+        }
+        return obj;
+    }
+
+    // --- Analysis Handlers ---
+
+    private JsonObject handleAnalyzerList(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+
+        try {
+            ghidra.framework.options.Options analysisOptions =
+                currentProgram.getOptions("Analyzers");
+
+            List<String> optionNames = analysisOptions.getOptionNames();
+            JsonArray analyzerList = new JsonArray();
+
+            for (String optName : optionNames) {
+                if (!optName.contains(".")) {
+                    try {
+                        boolean enabled = analysisOptions.getBoolean(optName, false);
+                        JsonObject entry = new JsonObject();
+                        entry.addProperty("name", optName);
+                        entry.addProperty("enabled", enabled);
+                        String desc = analysisOptions.getDescription(optName);
+                        if (desc != null && !desc.isEmpty()) {
+                            entry.addProperty("description", desc);
+                        }
+                        analyzerList.add(entry);
+                    } catch (Exception e) {
+                        // Skip non-boolean options
+                    }
+                }
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("count", analyzerList.size());
+            result.add("analyzers", analyzerList);
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to list analyzers: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleAnalyzerSet(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+
+        String name = getArgString(args, "name");
+        if (name == null || name.isEmpty()) return errorResult("analyzer name required");
+        if (!args.has("enabled")) return errorResult("enabled (true/false) required");
+        boolean enabled = args.get("enabled").getAsBoolean();
+
+        try {
+            ghidra.framework.options.Options analysisOptions =
+                currentProgram.getOptions("Analyzers");
+
+            List<String> optionNames = analysisOptions.getOptionNames();
+            boolean found = false;
+            for (String optName : optionNames) {
+                if (optName.equals(name)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return errorResult("Unknown analyzer: " + name);
+            }
+
+            int txId = currentProgram.startTransaction("Set analyzer");
+            try {
+                analysisOptions.setBoolean(name, enabled);
+                currentProgram.endTransaction(txId, true);
+
+                JsonObject result = new JsonObject();
+                result.addProperty("status", "set");
+                result.addProperty("name", name);
+                result.addProperty("enabled", enabled);
+                return result;
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+        } catch (Exception e) {
+            return errorResult("Failed to set analyzer: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleAnalyzeRun(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+
+        try {
+            ghidra.program.model.address.AddressSetView fullAddressSet = currentProgram.getMemory();
+
+            int txId = currentProgram.startTransaction("Re-analyze");
+            try {
+                ghidra.app.plugin.core.analysis.AutoAnalysisManager mgr =
+                    ghidra.app.plugin.core.analysis.AutoAnalysisManager.getAnalysisManager(currentProgram);
+                mgr.reAnalyzeAll(null);
+                mgr.startAnalysis(new ConsoleTaskMonitor());
+                currentProgram.endTransaction(txId, true);
+
+                JsonObject result = new JsonObject();
+                result.addProperty("status", "analysis_complete");
+                result.addProperty("program", currentProgram.getName());
+                return result;
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+        } catch (Exception e) {
+            return errorResult("Failed to run analysis: " + e.getMessage());
+        }
+    }
+
+    // --- Bookmark Handlers ---
+
+    private JsonObject handleBookmarkList(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+
+        String typeFilter = getArgString(args, "type");
+        int limit = getArgInt(args, "limit", 0);
+
+        BookmarkManager bm = currentProgram.getBookmarkManager();
+        JsonArray bookmarks = new JsonArray();
+
+        BookmarkType[] types = bm.getBookmarkTypes();
+        int count = 0;
+        for (BookmarkType typeObj : types) {
+            String type = typeObj.getTypeString();
+            if (typeFilter != null && !typeFilter.isEmpty() && !type.equalsIgnoreCase(typeFilter)) {
+                continue;
+            }
+            Iterator<Bookmark> iter = bm.getBookmarksIterator(type);
+            while (iter.hasNext()) {
+                if (limit > 0 && count >= limit) break;
+                Bookmark bookmark = iter.next();
+                JsonObject bobj = new JsonObject();
+                bobj.addProperty("address", bookmark.getAddress().toString());
+                bobj.addProperty("type", bookmark.getTypeString());
+                bobj.addProperty("category", bookmark.getCategory());
+                bobj.addProperty("comment", bookmark.getComment());
+                bookmarks.add(bobj);
+                count++;
+            }
+            if (limit > 0 && count >= limit) break;
+        }
+
+        JsonObject result = new JsonObject();
+        result.addProperty("count", bookmarks.size());
+        result.add("bookmarks", bookmarks);
+        return result;
+    }
+
+    private JsonObject handleBookmarkAdd(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+
+        String addrStr = getArgString(args, "address");
+        String type = getArgString(args, "type");
+        String category = getArgString(args, "category");
+        String comment = getArgString(args, "comment");
+        if (addrStr == null || addrStr.isEmpty()) return errorResult("address required");
+
+        if (type == null || type.isEmpty()) type = "Note";
+        if (category == null) category = "";
+        if (comment == null) comment = "";
+
+        try {
+            Address addr = resolveAddress(addrStr);
+            if (addr == null) {
+                return errorResult("Invalid address: " + addrStr);
+            }
+
+            BookmarkManager bm = currentProgram.getBookmarkManager();
+            int txId = currentProgram.startTransaction("Add bookmark");
+            try {
+                Bookmark bookmark = bm.setBookmark(addr, type, category, comment);
+                currentProgram.endTransaction(txId, true);
+
+                JsonObject result = new JsonObject();
+                result.addProperty("status", "added");
+                result.addProperty("address", addr.toString());
+                result.addProperty("type", bookmark.getTypeString());
+                result.addProperty("category", bookmark.getCategory());
+                result.addProperty("comment", bookmark.getComment());
+                return result;
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+        } catch (Exception e) {
+            return errorResult("Failed to add bookmark: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleBookmarkDelete(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+
+        String addrStr = getArgString(args, "address");
+        String type = getArgString(args, "type");
+        if (addrStr == null || addrStr.isEmpty()) return errorResult("address required");
+
+        try {
+            Address addr = resolveAddress(addrStr);
+            if (addr == null) {
+                return errorResult("Invalid address: " + addrStr);
+            }
+
+            BookmarkManager bm = currentProgram.getBookmarkManager();
+
+            Bookmark[] bookmarksAtAddr = bm.getBookmarks(addr);
+            if (bookmarksAtAddr.length == 0) {
+                return errorResult("No bookmarks at address: " + addrStr);
+            }
+
+            int txId = currentProgram.startTransaction("Delete bookmark");
+            try {
+                int deleted = 0;
+                for (Bookmark bookmark : bookmarksAtAddr) {
+                    if (type == null || type.isEmpty() || bookmark.getTypeString().equalsIgnoreCase(type)) {
+                        bm.removeBookmark(bookmark);
+                        deleted++;
+                    }
+                }
+                currentProgram.endTransaction(txId, true);
+
+                JsonObject result = new JsonObject();
+                result.addProperty("status", "deleted");
+                result.addProperty("address", addr.toString());
+                result.addProperty("deleted_count", deleted);
+                return result;
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+        } catch (Exception e) {
+            return errorResult("Failed to delete bookmark: " + e.getMessage());
         }
     }
 
