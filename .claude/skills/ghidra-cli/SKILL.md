@@ -320,14 +320,14 @@ All query commands accept these:
 --filter "size >= 50"
 
 # String
---filter "name contains 'crypt'"
+--filter "name ~ 'crypt'"
 
 # Combined
---filter "size > 100 and name contains 'main'"
+--filter "size > 100 AND name ~ 'main'"
 --filter "name != 'main'"
 ```
 
-Operators: `>`, `<`, `>=`, `<=`, `=`, `!=`, `contains`, `in`, `and`, `or`.
+Operators: `=`, `!=`, `>`, `>=`, `<`, `<=`, `~` (contains), `^` (starts with), `$` (ends with), `=~` (regex), `AND`, `OR`, `NOT`, `IN`, `EXISTS`.
 
 ## Agent Best Practices
 
@@ -387,7 +387,7 @@ ghidra analyze --project analysis
 # 2. Recon
 ghidra summary --project analysis
 ghidra function list --count --project analysis
-ghidra function list --filter "NOT name contains 'FUN_'" --fields name,address,size --limit 30 --project analysis
+ghidra function list --filter "NOT name ^ 'FUN_'" --fields name,address,size --limit 30 --project analysis
 
 # 3. Investigate
 ghidra decompile main --project analysis

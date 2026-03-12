@@ -34,20 +34,20 @@ Activate when the user requests:
 Before running queries, verify the environment:
 
 ```bash
-# Check if daemon is running for fast queries
-ghidra daemon status --project <project>
+# Check if bridge is running for fast queries
+ghidra status --project <project>
 
-# If not running, start it
-ghidra daemon start --project <project> --program <program>
+# If not running, start it (or just run import/analyze which auto-starts)
+ghidra start --project <project> --program <program>
 ```
 
 ### Quick Start (New Binary)
 
-For one-off analysis, use quick mode:
+Import and analyze — the bridge auto-starts:
 
 ```bash
-ghidra quick ./binary
-ghidra daemon start --project quick-analysis --program binary
+ghidra import ./binary --project myproject
+ghidra analyze --project myproject --program binary
 ```
 
 ### Full Project Setup
@@ -58,7 +58,7 @@ For sustained analysis:
 ghidra project create myproject
 ghidra import ./binary --project myproject
 ghidra analyze --project myproject --program binary
-ghidra daemon start --project myproject --program binary
+# Bridge is already running — queries work immediately
 ```
 
 ## Command Reference
@@ -71,7 +71,7 @@ ghidra function list --project <p> --program <prog>
 
 # Filter functions by size or name
 ghidra function list --filter "size > 500"
-ghidra function list --filter "name contains 'crypt'"
+ghidra function list --filter "name ~ 'crypt'"
 
 # Get function details
 ghidra function get main
@@ -241,13 +241,13 @@ ghidra graph callees <func> --depth 3
 
 ## Error Recovery
 
-| Situation          | Resolution                                                    |
-| ------------------ | ------------------------------------------------------------- |
-| Daemon not running | `ghidra daemon start --project <p> --program <prog>`          |
-| No project exists  | `ghidra project create <name>` or use `ghidra quick <binary>` |
-| Function not found | Use `ghidra find function "*pattern*"` to search              |
-| Address format     | Use hex with 0x prefix: `0x401000`                            |
-| Slow queries       | Start daemon for sub-second response times                    |
+| Situation              | Resolution                                                    |
+| ---------------------- | ------------------------------------------------------------- |
+| Bridge not responding  | `ghidra stop --project <p>` then retry (auto-starts)          |
+| No project exists      | `ghidra project create <name>`                                |
+| Function not found     | Use `ghidra find function "*pattern*"` to search              |
+| Address format         | Use hex with 0x prefix: `0x401000`                            |
+| Slow first command     | Normal: bridge startup + analysis takes seconds               |
 
 ## Global Options
 

@@ -1108,7 +1108,7 @@ pub struct ImportArgs {
     pub program: Option<String>,
     #[arg(long)]
     pub project: Option<String>,
-    /// Return immediately, let daemon continue import in background
+    /// Return immediately, let bridge continue import in background
     #[arg(long, default_value = "false")]
     pub detach: bool,
 }
@@ -1119,7 +1119,7 @@ pub struct AnalyzeArgs {
     pub program: Option<String>,
     #[arg(long)]
     pub project: Option<String>,
-    /// Return immediately, let daemon continue analysis in background
+    /// Return immediately, let bridge continue analysis in background
     #[arg(long, default_value = "false")]
     pub detach: bool,
 }

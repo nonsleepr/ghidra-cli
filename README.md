@@ -244,7 +244,7 @@ ghidra function list --fields "name,address,size"
 
 ### Output Format Design
 
-Format detection occurs at the CLI boundary rather than in daemon handlers. Handlers always return compact JSON for IPC efficiency and caching stability. The CLI applies format transformation (human-readable, pretty JSON) at the output boundary based on TTY detection or explicit flags. This design maintains a stable IPC protocol with a single format decision point, preventing daemon cache invalidation from format variations.
+Format detection occurs at the CLI boundary. The bridge always returns compact JSON for IPC efficiency. The CLI applies format transformation (human-readable, pretty JSON) at the output boundary based on TTY detection or explicit flags. This design maintains a stable IPC protocol with a single format decision point.
 
 ## Filtering
 
@@ -252,7 +252,7 @@ Use expressions to filter results:
 
 ```bash
 ghidra function list --filter "size > 100"
-ghidra function list --filter "name contains 'main'"
+ghidra function list --filter "name ~ 'main'"
 ghidra strings list --filter "length > 20"
 ```
 
