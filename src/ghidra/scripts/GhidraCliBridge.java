@@ -11,6 +11,11 @@
 import ghidra.app.script.GhidraScript;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
+import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
+import ghidra.program.model.pcode.HighFunction;
+import ghidra.program.model.pcode.HighSymbol;
+import ghidra.program.model.pcode.LocalSymbolMap;
+import ghidra.program.model.pcode.HighFunctionDBUtil;
 import ghidra.app.util.importer.AutoImporter;
 import ghidra.app.util.importer.MessageLog;
 import ghidra.framework.model.DomainFile;
@@ -229,6 +234,17 @@ public class GhidraCliBridge extends GhidraScript {
             case "type_get":        return handleTypeGet(args);
             case "type_create":     return handleTypeCreate(args);
             case "type_apply":      return handleTypeApply(args);
+            case "type_delete":     return handleTypeDelete(args);
+            case "type_rename":     return handleTypeRename(args);
+            case "type_create_enum": return handleTypeCreateEnum(args);
+            case "type_typedef":    return handleTypeTypedef(args);
+            case "type_add_field":  return handleTypeAddField(args);
+            case "type_del_field":  return handleTypeDelField(args);
+            // Function signature commands
+            case "function_set_signature": return handleFunctionSetSignature(args);
+            case "function_set_return_type": return handleFunctionSetReturnType(args);
+            case "function_set_calling_convention": return handleFunctionSetCallingConvention(args);
+            case "set_var_type":    return handleSetVarType(args);
             // Comment commands
             case "comment_list":    return handleCommentList(args);
             case "comment_get":     return handleCommentGet(args);
@@ -769,6 +785,51 @@ public class GhidraCliBridge extends GhidraScript {
                     result.add("signature", JsonNull.INSTANCE);
                 }
                 result.addProperty("code", code);
+
+                boolean withVars = getArgBool(args, "with_vars", false);
+                boolean withParams = getArgBool(args, "with_params", false);
+
+                if (withVars || withParams) {
+                    ghidra.program.model.pcode.HighFunction highFunc = results.getHighFunction();
+                    if (highFunc != null) {
+                        ghidra.program.model.pcode.LocalSymbolMap lsm = highFunc.getLocalSymbolMap();
+
+                        if (withParams) {
+                            JsonArray params = new JsonArray();
+                            Iterator<ghidra.program.model.pcode.HighSymbol> symIter = lsm.getSymbols();
+                            while (symIter.hasNext()) {
+                                ghidra.program.model.pcode.HighSymbol sym = symIter.next();
+                                if (sym.isParameter()) {
+                                    JsonObject paramObj = new JsonObject();
+                                    paramObj.addProperty("name", sym.getName());
+                                    paramObj.addProperty("type", sym.getDataType().getName());
+                                    paramObj.addProperty("size", sym.getSize());
+                                    paramObj.addProperty("storage", sym.getStorage().toString());
+                                    params.add(paramObj);
+                                }
+                            }
+                            result.add("params", params);
+                        }
+
+                        if (withVars) {
+                            JsonArray vars = new JsonArray();
+                            Iterator<ghidra.program.model.pcode.HighSymbol> symIter2 = lsm.getSymbols();
+                            while (symIter2.hasNext()) {
+                                ghidra.program.model.pcode.HighSymbol sym = symIter2.next();
+                                if (!sym.isParameter()) {
+                                    JsonObject varObj = new JsonObject();
+                                    varObj.addProperty("name", sym.getName());
+                                    varObj.addProperty("type", sym.getDataType().getName());
+                                    varObj.addProperty("size", sym.getSize());
+                                    varObj.addProperty("storage", sym.getStorage().toString());
+                                    vars.add(varObj);
+                                }
+                            }
+                            result.add("variables", vars);
+                        }
+                    }
+                }
+
                 return result;
             } else {
                 return errorResult("Decompilation failed");
@@ -2061,6 +2122,16 @@ public class GhidraCliBridge extends GhidraScript {
             typeData.addProperty("path", dt.getPathName());
             typeData.addProperty("category", dt.getCategoryPath().toString());
             typeData.addProperty("size", dt.getLength());
+            String kind;
+            if (dt instanceof Structure) kind = "struct";
+            else if (dt instanceof Union) kind = "union";
+            else if (dt instanceof ghidra.program.model.data.Enum) kind = "enum";
+            else if (dt instanceof TypeDef) kind = "typedef";
+            else if (dt instanceof FunctionDefinition) kind = "functiondef";
+            else if (dt instanceof Pointer) kind = "pointer";
+            else if (dt instanceof Array) kind = "array";
+            else kind = "other";
+            typeData.addProperty("kind", kind);
             types.add(typeData);
             count++;
         }
@@ -2077,21 +2148,7 @@ public class GhidraCliBridge extends GhidraScript {
         String typeName = getArgString(args, "name");
         if (typeName == null) return errorResult("Type name required");
 
-        DataTypeManager dtm = currentProgram.getDataTypeManager();
-
-        // Try by path first, then by name
-        DataType dataType = dtm.getDataType(typeName);
-        if (dataType == null) {
-            Iterator<DataType> dtIter = dtm.getAllDataTypes();
-            while (dtIter.hasNext()) {
-                DataType dt = dtIter.next();
-                if (dt.getName().equals(typeName)) {
-                    dataType = dt;
-                    break;
-                }
-            }
-        }
-
+        DataType dataType = resolveDataType(typeName);
         if (dataType == null) {
             return errorResult("Type not found: " + typeName);
         }
@@ -2104,6 +2161,7 @@ public class GhidraCliBridge extends GhidraScript {
         typeInfo.addProperty("description", dataType.getDescription());
 
         if (dataType instanceof Structure) {
+            typeInfo.addProperty("kind", "struct");
             Structure struct = (Structure) dataType;
             JsonArray components = new JsonArray();
             for (DataTypeComponent comp : struct.getComponents()) {
@@ -2116,6 +2174,7 @@ public class GhidraCliBridge extends GhidraScript {
             }
             typeInfo.add("components", components);
         } else if (dataType instanceof Union) {
+            typeInfo.addProperty("kind", "union");
             Union union = (Union) dataType;
             JsonArray components = new JsonArray();
             for (DataTypeComponent comp : union.getComponents()) {
@@ -2127,6 +2186,30 @@ public class GhidraCliBridge extends GhidraScript {
                 components.add(compObj);
             }
             typeInfo.add("components", components);
+        } else if (dataType instanceof ghidra.program.model.data.Enum) {
+            typeInfo.addProperty("kind", "enum");
+            ghidra.program.model.data.Enum enumType = (ghidra.program.model.data.Enum) dataType;
+            JsonArray members = new JsonArray();
+            for (String name : enumType.getNames()) {
+                JsonObject member = new JsonObject();
+                member.addProperty("name", name);
+                member.addProperty("value", enumType.getValue(name));
+                members.add(member);
+            }
+            typeInfo.add("members", members);
+        } else if (dataType instanceof TypeDef) {
+            typeInfo.addProperty("kind", "typedef");
+            TypeDef td = (TypeDef) dataType;
+            typeInfo.addProperty("base_type", td.getDataType().getName());
+            typeInfo.addProperty("base_type_path", td.getDataType().getPathName());
+        } else if (dataType instanceof FunctionDefinition) {
+            typeInfo.addProperty("kind", "functiondef");
+        } else if (dataType instanceof Pointer) {
+            typeInfo.addProperty("kind", "pointer");
+        } else if (dataType instanceof Array) {
+            typeInfo.addProperty("kind", "array");
+        } else {
+            typeInfo.addProperty("kind", "other");
         }
 
         return typeInfo;
@@ -2173,18 +2256,7 @@ public class GhidraCliBridge extends GhidraScript {
             Address addr = currentProgram.getAddressFactory().getAddress(addressStr);
             if (addr == null) return errorResult("Invalid address: " + addressStr);
 
-            DataTypeManager dtm = currentProgram.getDataTypeManager();
-            DataType dataType = dtm.getDataType(typeName);
-            if (dataType == null) {
-                Iterator<DataType> dtIter = dtm.getAllDataTypes();
-                while (dtIter.hasNext()) {
-                    DataType dt = dtIter.next();
-                    if (dt.getName().equals(typeName)) {
-                        dataType = dt;
-                        break;
-                    }
-                }
-            }
+            DataType dataType = resolveDataType(typeName);
             if (dataType == null) {
                 return errorResult("Type not found: " + typeName);
             }
@@ -2206,6 +2278,438 @@ public class GhidraCliBridge extends GhidraScript {
             return result;
         } catch (Exception e) {
             return errorResult("Failed to apply type: " + e.getMessage());
+        }
+    }
+
+    private DataType resolveDataType(String name) {
+        if (name == null || name.isEmpty()) return null;
+        DataTypeManager dtm = currentProgram.getDataTypeManager();
+        // Try by path first (e.g., "/int" or "/myCategory/myStruct")
+        DataType dt = dtm.getDataType(name);
+        if (dt != null) return dt;
+        // Scan by simple name
+        Iterator<DataType> iter = dtm.getAllDataTypes();
+        while (iter.hasNext()) {
+            DataType c = iter.next();
+            if (c.getName().equals(name)) return c;
+        }
+        // Handle pointer syntax: "int *" or "char **"
+        if (name.endsWith("*")) {
+            String base = name.substring(0, name.lastIndexOf('*')).trim();
+            DataType baseType = resolveDataType(base);
+            if (baseType != null) return new PointerDataType(baseType);
+        }
+        return null;
+    }
+
+    private JsonObject handleTypeDelete(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String typeName = getArgString(args, "name");
+        if (typeName == null || typeName.isEmpty()) return errorResult("Type name required");
+
+        try {
+            DataType dataType = resolveDataType(typeName);
+            if (dataType == null) return errorResult("Type not found: " + typeName);
+
+            String fullPath = dataType.getPathName();
+            DataTypeManager dtm = currentProgram.getDataTypeManager();
+            int txId = currentProgram.startTransaction("Delete type");
+            try {
+                boolean removed = dtm.remove(dataType, new ConsoleTaskMonitor());
+                currentProgram.endTransaction(txId, true);
+                if (!removed) {
+                    return errorResult("Failed to remove type: " + typeName + " (may be in use or built-in)");
+                }
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "deleted");
+            result.addProperty("name", typeName);
+            result.addProperty("path", fullPath);
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to delete type: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleTypeRename(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String oldName = getArgString(args, "old_name");
+        String newName = getArgString(args, "new_name");
+        if (oldName == null || oldName.isEmpty()) return errorResult("Old type name required");
+        if (newName == null || newName.isEmpty()) return errorResult("New type name required");
+
+        try {
+            DataType dataType = resolveDataType(oldName);
+            if (dataType == null) return errorResult("Type not found: " + oldName);
+
+            int txId = currentProgram.startTransaction("Rename type");
+            try {
+                dataType.setName(newName);
+                currentProgram.endTransaction(txId, true);
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "renamed");
+            result.addProperty("old_name", oldName);
+            result.addProperty("new_name", newName);
+            result.addProperty("path", dataType.getPathName());
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to rename type: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleTypeCreateEnum(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String name = getArgString(args, "name");
+        String valuesStr = getArgString(args, "values");
+        int size = getArgInt(args, "size", 4);
+        if (name == null || valuesStr == null) return errorResult("name and values required");
+
+        if (size != 1 && size != 2 && size != 4 && size != 8)
+            return errorResult("Enum size must be 1, 2, 4, or 8");
+
+        try {
+            DataTypeManager dtm = currentProgram.getDataTypeManager();
+            int txId = currentProgram.startTransaction("Create enum");
+            try {
+                EnumDataType enumDt = new EnumDataType(name, size);
+                String[] pairs = valuesStr.split(",");
+                for (String pair : pairs) {
+                    String[] kv = pair.trim().split("=", 2);
+                    if (kv.length != 2)
+                        throw new IllegalArgumentException("Invalid KEY=VALUE pair: " + pair.trim());
+                    String key = kv[0].trim();
+                    long value = Long.decode(kv[1].trim());
+                    enumDt.add(key, value);
+                }
+                dtm.addDataType(enumDt, null);
+                currentProgram.endTransaction(txId, true);
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "created");
+            result.addProperty("name", name);
+            result.addProperty("kind", "enum");
+            result.addProperty("size", size);
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to create enum: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleTypeTypedef(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String name = getArgString(args, "name");
+        String baseTypeName = getArgString(args, "base_type");
+        if (name == null || baseTypeName == null) return errorResult("name and base_type required");
+
+        try {
+            DataType baseType = resolveDataType(baseTypeName);
+            if (baseType == null) return errorResult("Base type not found: " + baseTypeName);
+
+            DataTypeManager dtm = currentProgram.getDataTypeManager();
+            int txId = currentProgram.startTransaction("Create typedef");
+            try {
+                TypedefDataType td = new TypedefDataType(name, baseType);
+                dtm.addDataType(td, null);
+                currentProgram.endTransaction(txId, true);
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "created");
+            result.addProperty("name", name);
+            result.addProperty("kind", "typedef");
+            result.addProperty("base_type", baseTypeName);
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to create typedef: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleTypeAddField(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String typeName = getArgString(args, "type_name");
+        String fieldName = getArgString(args, "field_name");
+        String fieldTypeName = getArgString(args, "field_type");
+        if (typeName == null || fieldName == null || fieldTypeName == null)
+            return errorResult("type_name, field_name, and field_type required");
+
+        try {
+            DataType structType = resolveDataType(typeName);
+            if (structType == null) return errorResult("Type not found: " + typeName);
+            if (!(structType instanceof Structure))
+                return errorResult("Type is not a struct: " + typeName);
+
+            DataType fieldDataType = resolveDataType(fieldTypeName);
+            if (fieldDataType == null) return errorResult("Field type not found: " + fieldTypeName);
+
+            Structure struct = (Structure) structType;
+            int txId = currentProgram.startTransaction("Add field to struct");
+            try {
+                int offset = getArgInt(args, "offset", -1);
+                if (offset >= 0) {
+                    int fieldSize = getArgInt(args, "size", fieldDataType.getLength());
+                    struct.insertAtOffset(offset, fieldDataType, fieldSize, fieldName, null);
+                } else {
+                    struct.add(fieldDataType, fieldName, null);
+                }
+                currentProgram.endTransaction(txId, true);
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "field_added");
+            result.addProperty("struct", typeName);
+            result.addProperty("field", fieldName);
+            result.addProperty("field_type", fieldTypeName);
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to add field: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleTypeDelField(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String typeName = getArgString(args, "type_name");
+        String fieldName = getArgString(args, "field_name");
+        if (typeName == null || fieldName == null)
+            return errorResult("type_name and field_name required");
+
+        try {
+            DataType structType = resolveDataType(typeName);
+            if (structType == null) return errorResult("Type not found: " + typeName);
+            if (!(structType instanceof Structure))
+                return errorResult("Type is not a struct: " + typeName);
+
+            Structure struct = (Structure) structType;
+            int ordinal = -1;
+            for (DataTypeComponent comp : struct.getComponents()) {
+                if (fieldName.equals(comp.getFieldName())) {
+                    ordinal = comp.getOrdinal();
+                    break;
+                }
+            }
+            if (ordinal < 0)
+                return errorResult("Field not found: " + fieldName + " in " + typeName);
+
+            int txId = currentProgram.startTransaction("Delete field from struct");
+            try {
+                struct.delete(ordinal);
+                currentProgram.endTransaction(txId, true);
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "field_deleted");
+            result.addProperty("struct", typeName);
+            result.addProperty("field", fieldName);
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to delete field: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleFunctionSetSignature(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String target = getArgString(args, "target");
+        String sigStr = getArgString(args, "signature");
+        if (target == null || sigStr == null) return errorResult("target and signature required");
+
+        try {
+            Function func = findFunctionByNameOrAddress(target);
+            if (func == null) return errorResult(buildFunctionTargetHint(target));
+
+            // Parse the signature using Ghidra's C parser
+            ghidra.app.util.cparser.C.CParserUtils.CParseResults parseResults =
+                ghidra.app.util.cparser.C.CParserUtils.parseSignature(
+                    this, currentProgram, sigStr);
+
+            if (parseResults == null || parseResults.getDataType() == null) {
+                return errorResult("Failed to parse signature: " + sigStr);
+            }
+
+            FunctionDefinition funcDef = (FunctionDefinition) parseResults.getDataType();
+
+            int txId = currentProgram.startTransaction("Set function signature");
+            try {
+                ApplyFunctionSignatureCmd cmd = new ApplyFunctionSignatureCmd(
+                    func.getEntryPoint(), funcDef, SourceType.USER_DEFINED);
+                cmd.applyTo(currentProgram);
+                currentProgram.endTransaction(txId, true);
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            String newSig = null;
+            try { newSig = func.getPrototypeString(false, false); } catch (Exception e) {}
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "signature_set");
+            result.addProperty("function", func.getName());
+            result.addProperty("address", func.getEntryPoint().toString());
+            if (newSig != null) {
+                result.addProperty("signature", newSig);
+            }
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to set signature: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleFunctionSetReturnType(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String target = getArgString(args, "target");
+        String returnTypeName = getArgString(args, "return_type");
+        if (target == null || returnTypeName == null)
+            return errorResult("target and return_type required");
+
+        try {
+            Function func = findFunctionByNameOrAddress(target);
+            if (func == null) return errorResult(buildFunctionTargetHint(target));
+
+            DataType returnType = resolveDataType(returnTypeName);
+            if (returnType == null)
+                return errorResult("Return type not found: " + returnTypeName);
+
+            int txId = currentProgram.startTransaction("Set return type");
+            try {
+                func.setReturnType(returnType, SourceType.USER_DEFINED);
+                currentProgram.endTransaction(txId, true);
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            String sig = null;
+            try { sig = func.getPrototypeString(false, false); } catch (Exception e) {}
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "return_type_set");
+            result.addProperty("function", func.getName());
+            result.addProperty("return_type", returnTypeName);
+            if (sig != null) result.addProperty("signature", sig);
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to set return type: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleFunctionSetCallingConvention(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String target = getArgString(args, "target");
+        String convention = getArgString(args, "convention");
+        if (target == null || convention == null)
+            return errorResult("target and convention required");
+
+        try {
+            Function func = findFunctionByNameOrAddress(target);
+            if (func == null) return errorResult(buildFunctionTargetHint(target));
+
+            int txId = currentProgram.startTransaction("Set calling convention");
+            try {
+                func.setCallingConvention(convention);
+                currentProgram.endTransaction(txId, true);
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            String sig = null;
+            try { sig = func.getPrototypeString(false, false); } catch (Exception e) {}
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "calling_convention_set");
+            result.addProperty("function", func.getName());
+            result.addProperty("calling_convention", convention);
+            if (sig != null) result.addProperty("signature", sig);
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to set calling convention: " + e.getMessage());
+        }
+    }
+
+    private JsonObject handleSetVarType(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String funcTarget = getArgString(args, "function");
+        String varName = getArgString(args, "var_name");
+        String typeName = getArgString(args, "type_name");
+        if (funcTarget == null || funcTarget.isEmpty()) return errorResult("Function target required");
+        if (varName == null || varName.isEmpty()) return errorResult("Variable name required (--var)");
+        if (typeName == null || typeName.isEmpty()) return errorResult("Type name required (--type)");
+
+        try {
+            Function func = findFunctionByNameOrAddress(funcTarget);
+            if (func == null) return errorResult(buildFunctionTargetHint(funcTarget));
+
+            DataType newType = resolveDataType(typeName);
+            if (newType == null) return errorResult("Type not found: " + typeName);
+
+            DecompInterface decompiler = new DecompInterface();
+            try {
+                decompiler.openProgram(currentProgram);
+                TaskMonitor mon = new ConsoleTaskMonitor();
+                DecompileResults results = decompiler.decompileFunction(func, 30, mon);
+                if (!results.decompileCompleted())
+                    return errorResult("Decompilation failed for " + funcTarget);
+
+                ghidra.program.model.pcode.HighFunction highFunc = results.getHighFunction();
+                if (highFunc == null)
+                    return errorResult("Could not get high-level function representation");
+
+                ghidra.program.model.pcode.LocalSymbolMap lsm = highFunc.getLocalSymbolMap();
+                ghidra.program.model.pcode.HighSymbol targetSym = null;
+                Iterator<ghidra.program.model.pcode.HighSymbol> symIter = lsm.getSymbols();
+                while (symIter.hasNext()) {
+                    ghidra.program.model.pcode.HighSymbol sym = symIter.next();
+                    if (sym.getName().equals(varName)) {
+                        targetSym = sym;
+                        break;
+                    }
+                }
+
+                if (targetSym == null)
+                    return errorResult("Variable not found: " + varName + " in function " + func.getName());
+
+                int txId = currentProgram.startTransaction("Set variable type");
+                try {
+                    HighFunctionDBUtil.updateDBVariable(targetSym, targetSym.getName(), newType, SourceType.USER_DEFINED);
+                    currentProgram.endTransaction(txId, true);
+                } catch (Exception e) {
+                    currentProgram.endTransaction(txId, false);
+                    throw e;
+                }
+
+                JsonObject result = new JsonObject();
+                result.addProperty("status", "updated");
+                result.addProperty("function", func.getName());
+                result.addProperty("variable", varName);
+                result.addProperty("new_type", newType.getName());
+                result.addProperty("address", func.getEntryPoint().toString());
+                return result;
+            } finally {
+                decompiler.dispose();
+            }
+        } catch (Exception e) {
+            return errorResult("Failed to set variable type: " + e.getMessage());
         }
     }
 

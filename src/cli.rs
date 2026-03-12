@@ -297,7 +297,7 @@ pub enum FunctionCommands {
     Get(FunctionGetArgs),
     /// Decompile function
     #[command(alias = "decomp")]
-    Decompile(FunctionGetArgs),
+    Decompile(FunctionDecompileArgs),
     /// Disassemble function
     #[command(alias = "disassemble", alias = "dis")]
     Disasm(FunctionGetArgs),
@@ -312,6 +312,15 @@ pub enum FunctionCommands {
     Create(CreateFunctionArgs),
     /// Delete function
     Delete(FunctionGetArgs),
+    /// Set function signature from C-style string
+    SetSignature(SetSignatureArgs),
+    /// Set function return type
+    SetReturnType(SetReturnTypeArgs),
+    /// Set function calling convention
+    SetCallingConvention(SetCallingConventionArgs),
+    /// Set variable type in a function
+    #[command(alias = "set-var-type")]
+    SetVarType(SetVarTypeArgs),
 }
 
 #[derive(Args, Clone, Serialize, Deserialize, Debug)]
@@ -353,6 +362,140 @@ pub struct CreateFunctionArgs {
     pub program: Option<String>,
     #[arg(long)]
     pub project: Option<String>,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct FunctionDecompileArgs {
+    /// Function target (name/address/FUN_...)
+    #[arg(value_name = "TARGET", required_unless_present = "target")]
+    pub positional_target: Option<String>,
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(long = "target", value_name = "TARGET")]
+    pub target: Option<String>,
+    /// Include local variable details (name, type, storage)
+    #[arg(long)]
+    pub with_vars: bool,
+    /// Include parameter details (name, type, storage)
+    #[arg(long)]
+    pub with_params: bool,
+    #[command(flatten)]
+    pub options: QueryOptions,
+}
+
+impl FunctionDecompileArgs {
+    pub fn resolved_target(&self) -> &str {
+        self.target
+            .as_deref()
+            .or(self.positional_target.as_deref())
+            .expect("clap should ensure target is provided")
+    }
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct SetSignatureArgs {
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(value_name = "TARGET", required_unless_present = "target")]
+    pub positional_target: Option<String>,
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(long = "target", value_name = "TARGET")]
+    pub target: Option<String>,
+    /// C-style signature string, e.g. "int main(int argc, char** argv)"
+    #[arg(long)]
+    pub signature: String,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+impl SetSignatureArgs {
+    pub fn resolved_target(&self) -> &str {
+        self.target
+            .as_deref()
+            .or(self.positional_target.as_deref())
+            .expect("clap should ensure target is provided")
+    }
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct SetReturnTypeArgs {
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(value_name = "TARGET", required_unless_present = "target")]
+    pub positional_target: Option<String>,
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(long = "target", value_name = "TARGET")]
+    pub target: Option<String>,
+    /// Return type name
+    #[arg(long = "type")]
+    pub return_type: String,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+impl SetReturnTypeArgs {
+    pub fn resolved_target(&self) -> &str {
+        self.target
+            .as_deref()
+            .or(self.positional_target.as_deref())
+            .expect("clap should ensure target is provided")
+    }
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct SetCallingConventionArgs {
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(value_name = "TARGET", required_unless_present = "target")]
+    pub positional_target: Option<String>,
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(long = "target", value_name = "TARGET")]
+    pub target: Option<String>,
+    /// Calling convention name (e.g., "__cdecl", "__stdcall", "__fastcall")
+    #[arg(long)]
+    pub convention: String,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+impl SetCallingConventionArgs {
+    pub fn resolved_target(&self) -> &str {
+        self.target
+            .as_deref()
+            .or(self.positional_target.as_deref())
+            .expect("clap should ensure target is provided")
+    }
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct SetVarTypeArgs {
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(value_name = "TARGET", required_unless_present = "target")]
+    pub positional_target: Option<String>,
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(long = "target", value_name = "TARGET")]
+    pub target: Option<String>,
+    /// Variable name to retype
+    #[arg(long = "var")]
+    pub var_name: String,
+    /// New type name (e.g., "int", "char *", "MyStruct")
+    #[arg(long = "type")]
+    pub type_name: String,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+impl SetVarTypeArgs {
+    pub fn resolved_target(&self) -> &str {
+        self.target
+            .as_deref()
+            .or(self.positional_target.as_deref())
+            .expect("clap should ensure target is provided")
+    }
 }
 
 #[derive(Subcommand, Clone, Serialize, Deserialize, Debug)]
@@ -483,6 +626,20 @@ pub enum TypeCommands {
     Create(CreateTypeArgs),
     /// Apply type to address
     Apply(ApplyTypeArgs),
+    /// Delete a data type
+    #[command(alias = "rm")]
+    Delete(TypeDeleteArgs),
+    /// Rename a data type
+    #[command(alias = "mv")]
+    Rename(TypeRenameArgs),
+    /// Create an enum type
+    CreateEnum(CreateEnumArgs),
+    /// Create a typedef (type alias)
+    Typedef(TypedefArgs),
+    /// Add a field to a struct type
+    AddField(TypeAddFieldArgs),
+    /// Remove a field from a struct type
+    DelField(TypeDelFieldArgs),
 }
 
 #[derive(Args, Clone, Serialize, Deserialize, Debug)]
@@ -505,6 +662,91 @@ pub struct CreateTypeArgs {
 pub struct ApplyTypeArgs {
     pub address: String,
     pub type_name: String,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct TypeDeleteArgs {
+    /// Name or path of the type to delete
+    pub name: String,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct TypeRenameArgs {
+    /// Current name of the type
+    pub old_name: String,
+    /// New name for the type
+    pub new_name: String,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct CreateEnumArgs {
+    /// Enum type name
+    pub name: String,
+    /// Comma-separated KEY=VALUE pairs, e.g. "RED=0,GREEN=1,BLUE=2"
+    #[arg(long)]
+    pub values: String,
+    /// Size in bytes (1, 2, 4, or 8)
+    #[arg(long, default_value = "4")]
+    pub size: i32,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct TypedefArgs {
+    /// Name for the new typedef
+    pub name: String,
+    /// Base type to alias (e.g., "int", "dword", "MyStruct")
+    pub base_type: String,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct TypeAddFieldArgs {
+    /// Name of the struct type to modify
+    pub type_name: String,
+    /// Field name
+    #[arg(long)]
+    pub name: String,
+    /// Field type (e.g., "int", "byte", "pointer", a custom struct name)
+    #[arg(long = "type")]
+    pub field_type: String,
+    /// Offset within the struct (if omitted, appends at end)
+    #[arg(long)]
+    pub offset: Option<i32>,
+    /// Field size override
+    #[arg(long)]
+    pub size: Option<i32>,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct TypeDelFieldArgs {
+    /// Name of the struct type to modify
+    pub type_name: String,
+    /// Field name to remove
+    #[arg(long)]
+    pub name: String,
     #[arg(long)]
     pub program: Option<String>,
     #[arg(long)]
@@ -659,6 +901,12 @@ pub struct DecompileArgs {
     /// Function target (name | 0xaddr | FUN_<hex>)
     #[arg(long = "target", value_name = "TARGET")]
     pub target: Option<String>,
+    /// Include local variable details (name, type, storage)
+    #[arg(long)]
+    pub with_vars: bool,
+    /// Include parameter details (name, type, storage)
+    #[arg(long)]
+    pub with_params: bool,
     #[command(flatten)]
     pub options: QueryOptions,
 }
