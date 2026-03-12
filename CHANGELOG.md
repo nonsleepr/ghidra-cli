@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Type system enhancements**:
+  - `type delete` / `type rename` - CRUD completion for data types
+  - `type create-enum` - Create enum types with `--values "KEY=VAL,..."` and `--size`
+  - `type typedef` - Create typedef aliases
+  - `type add-field` / `type del-field` - Add/remove struct fields with offset and size control
+  - `type list` now includes `kind` field (struct/union/enum/typedef/pointer/array/other)
+  - `type get` now shows enum members, typedef base type, and `kind` on all types
+- **Function signature editing**:
+  - `function set-signature` - Set full C-style function signature (parsed by Ghidra's CParser)
+  - `function set-return-type` - Set function return type
+  - `function set-calling-convention` - Set calling convention (__cdecl, __stdcall, etc.)
+  - `function set-var-type` - Retype local variables and parameters in decompiled functions
+- **Structured decompile output**:
+  - `decompile --with-vars` - Include local variable details (name, type, storage)
+  - `decompile --with-params` - Include parameter details (name, type, storage)
+- **Internal**: `resolveDataType()` helper in Java bridge for unified type resolution with pointer syntax support
+
 ### Changed
 
 - **BREAKING**: Replaced Python bridge (`bridge.py`) with Java bridge (`GhidraCliBridge.java`)

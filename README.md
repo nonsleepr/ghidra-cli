@@ -8,6 +8,8 @@ A high-performance Rust CLI for automating Ghidra reverse engineering tasks, des
 - **Auto-start bridge** - Import/analyze commands automatically start the bridge
 - **Fast queries** - Sub-second response times with Ghidra kept in memory
 - **Comprehensive analysis** - Functions, symbols, types, strings, cross-references
+- **Type system** - Create/edit structs, enums, typedefs; add/remove struct fields
+- **Function signatures** - Edit return types, calling conventions, full C signatures; retype variables
 - **Binary patching** - Modify bytes, NOP instructions, export patches
 - **Call graphs** - Generate caller/callee graphs, export to DOT format
 - **Search capabilities** - Find strings, bytes, functions, crypto patterns
@@ -98,7 +100,12 @@ ghidra analyze --project <p>           # Run analysis
 ghidra function list                   # List all functions
 ghidra function list --filter "size > 100"  # Filter by size
 ghidra decompile <name-or-addr>        # Decompile function
+ghidra decompile main --with-vars --with-params  # Include variable/param details
 ghidra disasm <address> --instructions 20  # Disassemble instructions
+ghidra function set-signature <func> --signature "int foo(int x, char *y)"
+ghidra function set-return-type <func> --type void
+ghidra function set-calling-convention <func> --convention __cdecl
+ghidra function set-var-type <func> --var local_10 --type "MyStruct *"
 ```
 
 ### Symbols & Types
@@ -106,8 +113,15 @@ ghidra disasm <address> --instructions 20  # Disassemble instructions
 ghidra symbol list                     # List symbols
 ghidra symbol create <addr> <name>     # Create symbol
 ghidra symbol rename <old> <new>       # Rename symbol
-ghidra type list                       # List data types
-ghidra type get <name>                 # Get type details
+ghidra type list                       # List data types (with kind: struct/enum/typedef/...)
+ghidra type get <name>                 # Get type details (fields, enum members, typedef base)
+ghidra type create <name>              # Create empty struct
+ghidra type add-field <struct> --name fd --type int   # Add struct field
+ghidra type del-field <struct> --name fd              # Remove struct field
+ghidra type create-enum <name> --values "A=0,B=1"     # Create enum
+ghidra type typedef <name> <base_type>                # Create typedef alias
+ghidra type rename <old> <new>         # Rename type
+ghidra type delete <name>              # Delete type
 ```
 
 ### Cross-References

@@ -148,6 +148,10 @@ fn extract_project_from_command(command: &Commands) -> Option<String> {
             cli::FunctionCommands::Rename(args) => args.project.clone(),
             cli::FunctionCommands::Create(args) => args.project.clone(),
             cli::FunctionCommands::Delete(args) => args.options.project.clone(),
+            cli::FunctionCommands::SetSignature(args) => args.project.clone(),
+            cli::FunctionCommands::SetReturnType(args) => args.project.clone(),
+            cli::FunctionCommands::SetCallingConvention(args) => args.project.clone(),
+            cli::FunctionCommands::SetVarType(args) => args.project.clone(),
         },
         Commands::Strings(cmd) => match cmd {
             cli::StringsCommands::List(opts) => opts.project.clone(),
@@ -204,6 +208,12 @@ fn extract_project_from_command(command: &Commands) -> Option<String> {
             cli::TypeCommands::Get(args) => args.options.project.clone(),
             cli::TypeCommands::Create(args) => args.project.clone(),
             cli::TypeCommands::Apply(args) => args.project.clone(),
+            cli::TypeCommands::Delete(args) => args.project.clone(),
+            cli::TypeCommands::Rename(args) => args.project.clone(),
+            cli::TypeCommands::CreateEnum(args) => args.project.clone(),
+            cli::TypeCommands::Typedef(args) => args.project.clone(),
+            cli::TypeCommands::AddField(args) => args.project.clone(),
+            cli::TypeCommands::DelField(args) => args.project.clone(),
         },
         Commands::Patch(cmd) => match cmd {
             cli::PatchCommands::Bytes(args) => args.project.clone(),
@@ -253,6 +263,10 @@ fn extract_program_from_command(command: &Commands) -> Option<String> {
             cli::FunctionCommands::Rename(args) => args.program.clone(),
             cli::FunctionCommands::Create(args) => args.program.clone(),
             cli::FunctionCommands::Delete(args) => args.options.program.clone(),
+            cli::FunctionCommands::SetSignature(args) => args.program.clone(),
+            cli::FunctionCommands::SetReturnType(args) => args.program.clone(),
+            cli::FunctionCommands::SetCallingConvention(args) => args.program.clone(),
+            cli::FunctionCommands::SetVarType(args) => args.program.clone(),
         },
         Commands::Strings(cmd) => match cmd {
             cli::StringsCommands::List(opts) => opts.program.clone(),
@@ -309,6 +323,12 @@ fn extract_program_from_command(command: &Commands) -> Option<String> {
             cli::TypeCommands::Get(args) => args.options.program.clone(),
             cli::TypeCommands::Create(args) => args.program.clone(),
             cli::TypeCommands::Apply(args) => args.program.clone(),
+            cli::TypeCommands::Delete(args) => args.program.clone(),
+            cli::TypeCommands::Rename(args) => args.program.clone(),
+            cli::TypeCommands::CreateEnum(args) => args.program.clone(),
+            cli::TypeCommands::Typedef(args) => args.program.clone(),
+            cli::TypeCommands::AddField(args) => args.program.clone(),
+            cli::TypeCommands::DelField(args) => args.program.clone(),
         },
         Commands::Patch(cmd) => match cmd {
             cli::PatchCommands::Bytes(args) => args.program.clone(),
@@ -679,16 +699,22 @@ fn execute_via_bridge(
             "memory" => client.memory_map(),
             other => anyhow::bail!("Query type '{}' not supported", other),
         },
-        Commands::Decompile(args) => client.decompile(args.resolved_target().to_string()),
+        Commands::Decompile(args) => client.decompile(
+            args.resolved_target().to_string(),
+            args.with_vars,
+            args.with_params,
+        ),
         Commands::Function(cmd) => {
             use cli::FunctionCommands;
             match cmd {
                 FunctionCommands::List(opts) => {
                     client.list_functions(opts.limit.or(default_limit), opts.filter.clone())
                 }
-                FunctionCommands::Decompile(args) => {
-                    client.decompile(args.resolved_target().to_string())
-                }
+                FunctionCommands::Decompile(args) => client.decompile(
+                    args.resolved_target().to_string(),
+                    args.with_vars,
+                    args.with_params,
+                ),
                 FunctionCommands::Get(args) => client.send_command(
                     "get_function",
                     Some(json!({"address": args.resolved_target()})),
@@ -716,6 +742,35 @@ fn execute_via_bridge(
                     "delete_function",
                     Some(json!({
                         "address": args.resolved_target(),
+                    })),
+                ),
+                FunctionCommands::SetSignature(args) => client.send_command(
+                    "function_set_signature",
+                    Some(json!({
+                        "target": args.resolved_target(),
+                        "signature": args.signature,
+                    })),
+                ),
+                FunctionCommands::SetReturnType(args) => client.send_command(
+                    "function_set_return_type",
+                    Some(json!({
+                        "target": args.resolved_target(),
+                        "return_type": args.return_type,
+                    })),
+                ),
+                FunctionCommands::SetCallingConvention(args) => client.send_command(
+                    "function_set_calling_convention",
+                    Some(json!({
+                        "target": args.resolved_target(),
+                        "convention": args.convention,
+                    })),
+                ),
+                FunctionCommands::SetVarType(args) => client.send_command(
+                    "set_var_type",
+                    Some(json!({
+                        "function": args.resolved_target(),
+                        "var_name": args.var_name,
+                        "type_name": args.type_name,
                     })),
                 ),
             }
@@ -826,6 +881,46 @@ fn execute_via_bridge(
                 TypeCommands::Get(args) => client.type_get(&args.name),
                 TypeCommands::Create(args) => client.type_create(&args.definition),
                 TypeCommands::Apply(args) => client.type_apply(&args.address, &args.type_name),
+                TypeCommands::Delete(args) => client.send_command(
+                    "type_delete",
+                    Some(json!({"name": args.name})),
+                ),
+                TypeCommands::Rename(args) => client.send_command(
+                    "type_rename",
+                    Some(json!({"old_name": args.old_name, "new_name": args.new_name})),
+                ),
+                TypeCommands::CreateEnum(args) => client.send_command(
+                    "type_create_enum",
+                    Some(json!({
+                        "name": args.name,
+                        "values": args.values,
+                        "size": args.size,
+                    })),
+                ),
+                TypeCommands::Typedef(args) => client.send_command(
+                    "type_typedef",
+                    Some(json!({
+                        "name": args.name,
+                        "base_type": args.base_type,
+                    })),
+                ),
+                TypeCommands::AddField(args) => client.send_command(
+                    "type_add_field",
+                    Some(json!({
+                        "type_name": args.type_name,
+                        "field_name": args.name,
+                        "field_type": args.field_type,
+                        "offset": args.offset,
+                        "size": args.size,
+                    })),
+                ),
+                TypeCommands::DelField(args) => client.send_command(
+                    "type_del_field",
+                    Some(json!({
+                        "type_name": args.type_name,
+                        "field_name": args.name,
+                    })),
+                ),
             }
         }
         Commands::Comment(cmd) => {

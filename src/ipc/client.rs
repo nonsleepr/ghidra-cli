@@ -116,8 +116,20 @@ impl BridgeClient {
     }
 
     /// Decompile a function.
-    pub fn decompile(&self, address: String) -> Result<serde_json::Value> {
-        self.send_command("decompile", Some(json!({"address": address})))
+    pub fn decompile(
+        &self,
+        address: String,
+        with_vars: bool,
+        with_params: bool,
+    ) -> Result<serde_json::Value> {
+        self.send_command(
+            "decompile",
+            Some(json!({
+                "address": address,
+                "with_vars": with_vars,
+                "with_params": with_params,
+            })),
+        )
     }
 
     /// List strings.
