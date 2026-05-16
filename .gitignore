@@ -21,3 +21,7 @@ target
 #.idea/
 
 .opencode/
+
+# Nix build results
+result
+result-*
