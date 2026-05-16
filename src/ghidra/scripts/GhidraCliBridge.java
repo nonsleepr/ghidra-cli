@@ -56,9 +56,10 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 
-import ghidra.program.model.bookmark.Bookmark;
-import ghidra.program.model.bookmark.BookmarkManager;
-import ghidra.program.model.bookmark.BookmarkType;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkManager;
+import ghidra.program.model.listing.BookmarkType;
+import ghidra.program.model.listing.CommentType;
 
 import java.io.*;
 import java.net.InetAddress;
@@ -1236,32 +1237,19 @@ public class GhidraCliBridge extends GhidraScript {
             MessageLog log = new MessageLog();
             Object consumer = project;
 
-            // Ghidra 12+ API: importByUsingBestGuess(File, Project, String, Object, MessageLog, TaskMonitor)
-            Object loadResults = AutoImporter.importByUsingBestGuess(
-                binaryFile, project, "/", consumer, log, mon
-            );
+            ghidra.app.util.opinion.LoadResults<Program> loadResults =
+                AutoImporter.importByUsingBestGuess(
+                    binaryFile, project, "/", consumer, log, mon
+                );
 
             if (loadResults == null) {
                 return errorResult("Failed to import binary");
             }
 
-            // Save and release - loadResults is a LoadResults<Program>
-            // Use reflection to handle API differences across Ghidra versions
             try {
-                java.lang.reflect.Method saveMethod = loadResults.getClass().getMethod("save", TaskMonitor.class);
-                // Actually it's per-loaded item; iterate
-                // LoadResults implements Iterable<Loaded<DomainObject>>
-                if (loadResults instanceof Iterable) {
-                    for (Object loaded : (Iterable<?>) loadResults) {
-                        java.lang.reflect.Method saveMeth = loaded.getClass().getMethod("save", TaskMonitor.class);
-                        saveMeth.invoke(loaded, mon);
-                    }
-                }
-                java.lang.reflect.Method releaseMethod = loadResults.getClass().getMethod("release", Object.class);
-                releaseMethod.invoke(loadResults, consumer);
-            } catch (Exception reflectEx) {
-                // Fallback: try direct cast for older APIs
-                printerr("Import save warning: " + reflectEx.getMessage());
+                loadResults.save(mon);
+            } finally {
+                loadResults.release(consumer);
             }
 
             JsonObject result = new JsonObject();
@@ -2334,7 +2322,7 @@ public class GhidraCliBridge extends GhidraScript {
             DataTypeManager dtm = currentProgram.getDataTypeManager();
             int txId = currentProgram.startTransaction("Delete type");
             try {
-                boolean removed = dtm.remove(dataType, new ConsoleTaskMonitor());
+                boolean removed = dtm.remove(dataType);
                 currentProgram.endTransaction(txId, true);
                 if (!removed) {
                     return errorResult("Failed to remove type: " + typeName + " (may be in use or built-in)");
@@ -3119,13 +3107,13 @@ public class GhidraCliBridge extends GhidraScript {
 
     // --- Comment Handlers ---
 
-    private int resolveCommentType(String typeStr) {
-        if (typeStr == null) return CodeUnit.EOL_COMMENT;
+    private CommentType resolveCommentType(String typeStr) {
+        if (typeStr == null) return CommentType.EOL;
         switch (typeStr.toUpperCase()) {
-            case "PRE":   return CodeUnit.PRE_COMMENT;
-            case "POST":  return CodeUnit.POST_COMMENT;
-            case "PLATE": return CodeUnit.PLATE_COMMENT;
-            default:      return CodeUnit.EOL_COMMENT;
+            case "PRE":   return CommentType.PRE;
+            case "POST":  return CommentType.POST;
+            case "PLATE": return CommentType.PLATE;
+            default:      return CommentType.EOL;
         }
     }
 
@@ -3140,12 +3128,7 @@ public class GhidraCliBridge extends GhidraScript {
         JsonArray comments = new JsonArray();
         int count = 0;
 
-        int[][] commentTypes = {
-            {CodeUnit.EOL_COMMENT},
-            {CodeUnit.PRE_COMMENT},
-            {CodeUnit.POST_COMMENT},
-            {CodeUnit.PLATE_COMMENT}
-        };
+        CommentType[] commentTypes = {CommentType.EOL, CommentType.PRE, CommentType.POST, CommentType.PLATE};
         String[] commentNames = {"EOL", "PRE", "POST", "PLATE"};
 
         for (MemoryBlock block : memory.getBlocks()) {
@@ -3167,7 +3150,7 @@ public class GhidraCliBridge extends GhidraScript {
                 for (int i = 0; i < commentNames.length; i++) {
                     if (limit > 0 && count >= limit) break;
 
-                    String text = cu.getComment(commentTypes[i][0]);
+                    String text = cu.getComment(commentTypes[i]);
                     if (text != null) {
                         if (nameFilter != null && !text.toLowerCase().contains(nameFilter.toLowerCase())) {
                             continue;
@@ -3204,7 +3187,7 @@ public class GhidraCliBridge extends GhidraScript {
             CodeUnit cu = listing.getCodeUnitAt(addr);
             if (cu == null) return errorResult("No code unit at address: " + addressStr);
 
-            int[] types = {CodeUnit.EOL_COMMENT, CodeUnit.PRE_COMMENT, CodeUnit.POST_COMMENT, CodeUnit.PLATE_COMMENT};
+            CommentType[] types = {CommentType.EOL, CommentType.PRE, CommentType.POST, CommentType.PLATE};
             String[] names = {"EOL", "PRE", "POST", "PLATE"};
 
             JsonArray comments = new JsonArray();
@@ -3246,7 +3229,7 @@ public class GhidraCliBridge extends GhidraScript {
                 return errorResult("Invalid comment type: " + commentTypeStr + ". Must be one of: EOL, PRE, POST, PLATE");
             }
 
-            int commentType = resolveCommentType(commentTypeStr);
+            CommentType commentType = resolveCommentType(commentTypeStr);
             Listing listing = currentProgram.getListing();
 
             int txId = currentProgram.startTransaction("Set comment");
@@ -3281,10 +3264,10 @@ public class GhidraCliBridge extends GhidraScript {
 
             int txId = currentProgram.startTransaction("Delete comments");
             try {
-                listing.setComment(addr, CodeUnit.EOL_COMMENT, null);
-                listing.setComment(addr, CodeUnit.PRE_COMMENT, null);
-                listing.setComment(addr, CodeUnit.POST_COMMENT, null);
-                listing.setComment(addr, CodeUnit.PLATE_COMMENT, null);
+                listing.setComment(addr, CommentType.EOL, null);
+                listing.setComment(addr, CommentType.PRE, null);
+                listing.setComment(addr, CommentType.POST, null);
+                listing.setComment(addr, CommentType.PLATE, null);
                 currentProgram.endTransaction(txId, true);
             } catch (Exception e) {
                 currentProgram.endTransaction(txId, false);
