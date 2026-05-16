@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 mod common;
 use common::{ensure_test_project, get_function_address, ghidra, DaemonTestHarness};
 
-const TEST_PROJECT: &str = "ci-test";
+const TEST_PROJECT: &str = "ci-test-patch";
 const TEST_PROGRAM: &str = "sample_binary";
 
 static HARNESS: OnceLock<DaemonTestHarness> = OnceLock::new();
@@ -49,14 +49,7 @@ fn test_patch_bytes_success() {
         .arg(TEST_PROGRAM)
         .run();
 
-    // Patching at code addresses may conflict with existing instructions in Ghidra
-    assert!(
-        result.exit_code == 0
-            || result.stderr.contains("conflict")
-            || result.stderr.contains("Memory change"),
-        "Expected success or instruction conflict, got: stderr={}",
-        result.stderr
-    );
+    result.assert_success();
 }
 
 /// Test patching with NOP instruction.
@@ -66,24 +59,19 @@ fn test_patch_nop_success() {
     require_ghidra!();
     let harness = harness();
 
-    let main_addr = get_function_address(harness, TEST_PROJECT, TEST_PROGRAM, "main");
+    // Use factorial (not main) to avoid collision with test_patch_bytes_success
+    let func_addr = get_function_address(harness, TEST_PROJECT, TEST_PROGRAM, "factorial");
 
     let result = ghidra(harness)
         .arg("patch")
         .arg("nop")
-        .arg(&main_addr)
+        .arg(&func_addr)
         .arg("--program")
         .arg(TEST_PROGRAM)
         .run();
 
-    // NOP at code address may conflict with existing instructions
-    assert!(
-        result.exit_code == 0
-            || result.stderr.contains("conflict")
-            || result.stderr.contains("Memory change"),
-        "Expected success or instruction conflict, got: stderr={}",
-        result.stderr
-    );
+    // NOP at code address should now succeed (bridge clears code units before patching)
+    result.assert_success();
 }
 
 /// Test exporting patched binary.

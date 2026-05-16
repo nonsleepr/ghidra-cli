@@ -330,7 +330,6 @@ pub enum FunctionCommands {
     /// Set function calling convention
     SetCallingConvention(SetCallingConventionArgs),
     /// Set variable type in a function
-    #[command(alias = "set-var-type")]
     SetVarType(SetVarTypeArgs),
 }
 

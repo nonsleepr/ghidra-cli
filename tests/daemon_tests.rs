@@ -7,7 +7,7 @@ use serial_test::serial;
 mod common;
 use common::{ensure_test_project, DaemonTestHarness};
 
-const TEST_PROJECT: &str = "ci-test";
+const TEST_PROJECT: &str = "ci-test-daemon";
 const TEST_PROGRAM: &str = "sample_binary";
 
 /// Try to create a DaemonTestHarness. Returns None (and skips the test) if

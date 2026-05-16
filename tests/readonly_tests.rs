@@ -720,7 +720,160 @@ fn test_graph_callees() {
     }
 }
 
+// ============================================================================
+// Regression tests for previously-fixed bugs
+// ============================================================================
+
+/// B-1: function calls returned [] due to only checking entry point refs.
+/// Verifies outgoing calls from main are non-empty.
 #[test]
+#[serial]
+fn test_function_calls_returns_results() {
+    require_ghidra!();
+    let harness = harness();
+
+    let result = ghidra(harness)
+        .arg("function")
+        .arg("calls")
+        .arg("main")
+        .with_project(TEST_PROJECT, TEST_PROGRAM)
+        .json_format()
+        .run();
+
+    result.assert_success();
+    let calls: Vec<serde_json::Value> = result.json();
+    // main calls several functions; results array must be non-empty
+    assert!(!calls.is_empty(), "function calls main should return non-empty results");
+    // Each result should have callee and call_site fields
+    let first = calls[0].as_object().expect("result should be an object");
+    assert!(first.contains_key("callee"), "result should have 'callee' field");
+    assert!(first.contains_key("call_site"), "result should have 'call_site' field");
+}
+
+/// B-1: graph callees returned [] due to only checking entry point refs.
+#[test]
+#[serial]
+fn test_graph_callees_returns_results() {
+    require_ghidra!();
+    let harness = harness();
+
+    let result = ghidra(harness)
+        .arg("graph")
+        .arg("callees")
+        .arg("main")
+        .with_project(TEST_PROJECT, TEST_PROGRAM)
+        .json_format()
+        .run();
+
+    result.assert_success();
+    let callees: Vec<serde_json::Value> = result.json();
+    assert!(!callees.is_empty(), "graph callees main should return non-empty results");
+}
+
+/// B-1: graph callers returned [] for functions called via PARAM/INDIRECTION refs.
+#[test]
+#[serial]
+fn test_graph_callers_returns_results() {
+    require_ghidra!();
+    let harness = harness();
+
+    // add_numbers is called by main — should have at least one caller
+    let result = ghidra(harness)
+        .arg("graph")
+        .arg("callers")
+        .arg("add_numbers")
+        .with_project(TEST_PROJECT, TEST_PROGRAM)
+        .json_format()
+        .run();
+
+    result.assert_success();
+    let callers: Vec<serde_json::Value> = result.json();
+    assert!(!callers.is_empty(), "graph callers add_numbers should return non-empty results");
+}
+
+/// B-2: strings refs errored with "Cannot resolve function target".
+#[test]
+#[serial]
+fn test_strings_refs_returns_results() {
+    require_ghidra!();
+    let harness = harness();
+
+    // sample_binary has strings like "Hello" or "Error" used in functions
+    // Use a broad pattern that's likely to match something
+    let result = ghidra(harness)
+        .arg("strings")
+        .arg("refs")
+        .arg("Hello")
+        .with_project(TEST_PROJECT, TEST_PROGRAM)
+        .json_format()
+        .run();
+
+    result.assert_success();
+    // Should not error; result is a valid JSON array
+    let _val: serde_json::Value = result.json();
+}
+
+/// B-4: dump exports --limit was ignored.
+#[test]
+#[serial]
+fn test_dump_exports_limit() {
+    require_ghidra!();
+    let harness = harness();
+
+    let result_all = ghidra(harness)
+        .arg("dump")
+        .arg("exports")
+        .with_project(TEST_PROJECT, TEST_PROGRAM)
+        .json_format()
+        .run();
+    result_all.assert_success();
+    let all: Vec<serde_json::Value> = result_all.json();
+
+    if all.len() > 2 {
+        let result_limited = ghidra(harness)
+            .arg("dump")
+            .arg("exports")
+            .arg("--limit")
+            .arg("2")
+            .with_project(TEST_PROJECT, TEST_PROGRAM)
+            .json_format()
+            .run();
+        result_limited.assert_success();
+        let limited: Vec<serde_json::Value> = result_limited.json();
+        assert_eq!(limited.len(), 2, "dump exports --limit 2 should return exactly 2 results");
+    }
+}
+
+/// B-4: dump imports --limit was ignored.
+#[test]
+#[serial]
+fn test_dump_imports_limit() {
+    require_ghidra!();
+    let harness = harness();
+
+    let result_all = ghidra(harness)
+        .arg("dump")
+        .arg("imports")
+        .with_project(TEST_PROJECT, TEST_PROGRAM)
+        .json_format()
+        .run();
+    result_all.assert_success();
+    let all: Vec<serde_json::Value> = result_all.json();
+
+    if all.len() > 2 {
+        let result_limited = ghidra(harness)
+            .arg("dump")
+            .arg("imports")
+            .arg("--limit")
+            .arg("2")
+            .with_project(TEST_PROJECT, TEST_PROGRAM)
+            .json_format()
+            .run();
+        result_limited.assert_success();
+        let limited: Vec<serde_json::Value> = result_limited.json();
+        assert_eq!(limited.len(), 2, "dump imports --limit 2 should return exactly 2 results");
+    }
+}#[test]
 #[serial]
 fn test_graph_export_dot() {
     require_ghidra!();
@@ -1164,7 +1317,6 @@ fn test_diff_functions_with_fun_style_targets() {
         .arg("functions")
         .arg(&fun_target)
         .arg(&fun_target)
-        .with_project(TEST_PROJECT, TEST_PROGRAM)
         .run();
 
     result.assert_success();
@@ -1235,6 +1387,15 @@ fn test_program_close() {
         "Expected success or 'Unknown command', got: {}",
         result.stderr
     );
+
+    // Re-open the program so subsequent tests in this suite still work.
+    let _ = ghidra(harness)
+        .arg("program")
+        .arg("open")
+        .arg("--program")
+        .arg(TEST_PROGRAM)
+        .with_project(TEST_PROJECT, TEST_PROGRAM)
+        .run();
 }
 
 #[test]

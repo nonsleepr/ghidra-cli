@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 mod common;
 use common::{ensure_test_project, get_function_address, DaemonTestHarness};
 
-const TEST_PROJECT: &str = "ci-test";
+const TEST_PROJECT: &str = "ci-test-type";
 const TEST_PROGRAM: &str = "sample_binary";
 
 static HARNESS: OnceLock<DaemonTestHarness> = OnceLock::new();
