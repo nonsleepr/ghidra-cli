@@ -242,7 +242,6 @@ public class GhidraCliBridge extends GhidraScript {
             case "type_get":        return handleTypeGet(args);
             case "type_create":     return handleTypeCreate(args);
             case "type_apply":      return handleTypeApply(args);
-<<<<<<< HEAD
             case "type_delete":     return handleTypeDelete(args);
             case "type_rename":     return handleTypeRename(args);
             case "type_create_enum": return handleTypeCreateEnum(args);
