@@ -18,7 +18,7 @@ fn test_project_create() {
 
     let project = unique_project_name("create");
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("create")
         .arg(&project)
@@ -27,7 +27,7 @@ fn test_project_create() {
         .stdout(predicate::str::contains("created").or(predicate::str::contains("Created")));
 
     // Cleanup
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("delete")
         .arg(&project)
@@ -39,7 +39,7 @@ fn test_project_create() {
 fn test_project_list() {
     require_ghidra!();
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("list")
         .assert()
@@ -52,14 +52,14 @@ fn test_project_info() {
 
     let project = unique_project_name("info");
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("create")
         .arg(&project)
         .assert()
         .success();
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("info")
         .arg(&project)
@@ -67,7 +67,7 @@ fn test_project_info() {
         .success();
 
     // Cleanup
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("delete")
         .arg(&project)
@@ -81,21 +81,21 @@ fn test_project_lifecycle() {
 
     let project = unique_project_name("lifecycle");
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("create")
         .arg(&project)
         .assert()
         .success();
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("list")
         .assert()
         .success()
         .stdout(predicate::str::contains(&project));
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("delete")
         .arg(&project)
@@ -129,7 +129,7 @@ fn test_import_binary() {
     .expect("Failed to run import");
     assert!(status.success(), "Import failed with status: {}", status);
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("delete")
         .arg(&project)
@@ -175,7 +175,7 @@ fn test_analyze_program() {
     .expect("Failed to run analyze");
     assert!(status.success(), "Analyze failed with status: {}", status);
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("delete")
         .arg(&project)
@@ -189,7 +189,7 @@ fn test_project_delete_nonexistent() {
 
     let project = unique_project_name("missing");
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("delete")
         .arg(&project)
@@ -243,7 +243,7 @@ fn test_import_existing_program() {
         status
     );
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("project")
         .arg("delete")
         .arg(&project)

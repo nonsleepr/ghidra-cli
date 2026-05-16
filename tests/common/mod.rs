@@ -332,7 +332,7 @@ pub fn run_cli_with_timeout(
 #[macro_export]
 macro_rules! require_ghidra {
     () => {
-        let doctor = assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+        let doctor = assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
             .arg("doctor")
             .output()
             .expect("Failed to run ghidra doctor");

@@ -22,7 +22,7 @@ A high-performance Rust CLI for automating Ghidra reverse engineering tasks, des
 
 ```mermaid
 flowchart LR
-    CLI["ghidra CLI\n(Rust/clap)"]
+    CLI["ghidra-cli\n(Rust/clap)"]
     Bridge["GhidraCliBridge.java\n(GhidraScript in analyzeHeadless)"]
     Project[("Ghidra Project\n~/.local/share/ghidra-projects/")]
     Port["~/.local/share/ghidra-cli/\nbridge-{md5}.port"]
@@ -70,132 +70,132 @@ Set the Ghidra installation path:
 ```bash
 export GHIDRA_INSTALL_DIR=/path/to/ghidra
 # Or configure via CLI:
-ghidra config set ghidra_install_dir /path/to/ghidra
+ghidra-cli config set ghidra_install_dir /path/to/ghidra
 ```
 
 ## Quick Start
 
 ```bash
 # Check installation
-ghidra doctor
+ghidra-cli doctor
 
 # Import and analyze a binary (bridge auto-starts)
-ghidra import ./binary --project myproject --program mybinary
-ghidra analyze --project myproject --program mybinary
+ghidra-cli import ./binary --project myproject --program mybinary
+ghidra-cli analyze --project myproject --program mybinary
 
 # Query functions (uses running bridge)
-ghidra function list
+ghidra-cli function list
 
 # Decompile a function
-ghidra decompile main
+ghidra-cli decompile main
 
 # Find interesting strings
-ghidra find string "password"
+ghidra-cli find string "password"
 
 # Get cross-references
-ghidra x-ref to 0x401000
+ghidra-cli x-ref to 0x401000
 
 # Generate call graph
-ghidra graph callers main --depth 3
+ghidra-cli graph callers main --depth 3
 ```
 
 ## Commands
 
 ### Project & Program Management
 ```bash
-ghidra project create <name>           # Create project
-ghidra project list                    # List projects
-ghidra project delete <name>           # Delete project
-ghidra import <binary> --project <p>   # Import binary (auto-starts bridge)
-ghidra analyze --project <p>           # Run analysis
+ghidra-cli project create <name>           # Create project
+ghidra-cli project list                    # List projects
+ghidra-cli project delete <name>           # Delete project
+ghidra-cli import <binary> --project <p>   # Import binary (auto-starts bridge)
+ghidra-cli analyze --project <p>           # Run analysis
 ```
 
 ### Function Analysis
 ```bash
-ghidra function list                   # List all functions
-ghidra function list --filter "size > 100"  # Filter by size
-ghidra function calls <name>           # List calls made by function
-ghidra decompile <name-or-addr>        # Decompile function
-ghidra decompile main --with-vars --with-params  # Include variable/param details
-ghidra disasm <address> --instructions 20  # Disassemble instructions
-ghidra function set-signature <func> --signature "int foo(int x, char *y)"
-ghidra function set-return-type <func> --type void
-ghidra function set-calling-convention <func> --convention __cdecl
-ghidra function set-var-type <func> --var local_10 --type "MyStruct *"
+ghidra-cli function list                   # List all functions
+ghidra-cli function list --filter "size > 100"  # Filter by size
+ghidra-cli function calls <name>           # List calls made by function
+ghidra-cli decompile <name-or-addr>        # Decompile function
+ghidra-cli decompile main --with-vars --with-params  # Include variable/param details
+ghidra-cli disasm <address> --instructions 20  # Disassemble instructions
+ghidra-cli function set-signature <func> --signature "int foo(int x, char *y)"
+ghidra-cli function set-return-type <func> --type void
+ghidra-cli function set-calling-convention <func> --convention __cdecl
+ghidra-cli function set-var-type <func> --var local_10 --type "MyStruct *"
 ```
 
 ### Symbols & Types
 ```bash
-ghidra symbol list                     # List symbols
-ghidra symbol create <addr> <name>     # Create symbol
-ghidra symbol rename <old> <new>       # Rename symbol
-ghidra type list                       # List data types (with kind: struct/enum/typedef/...)
-ghidra type get <name>                 # Get type details (fields, enum members, typedef base)
-ghidra type create <name>              # Create empty struct
-ghidra type add-field <struct> --name fd --type int   # Add struct field
-ghidra type del-field <struct> --name fd              # Remove struct field
-ghidra type create-enum <name> --values "A=0,B=1"     # Create enum
-ghidra type typedef <name> <base_type>                # Create typedef alias
-ghidra type rename <old> <new>         # Rename type
-ghidra type delete <name>              # Delete type
+ghidra-cli symbol list                     # List symbols
+ghidra-cli symbol create <addr> <name>     # Create symbol
+ghidra-cli symbol rename <old> <new>       # Rename symbol
+ghidra-cli type list                       # List data types (with kind: struct/enum/typedef/...)
+ghidra-cli type get <name>                 # Get type details (fields, enum members, typedef base)
+ghidra-cli type create <name>              # Create empty struct
+ghidra-cli type add-field <struct> --name fd --type int   # Add struct field
+ghidra-cli type del-field <struct> --name fd              # Remove struct field
+ghidra-cli type create-enum <name> --values "A=0,B=1"     # Create enum
+ghidra-cli type typedef <name> <base_type>                # Create typedef alias
+ghidra-cli type rename <old> <new>         # Rename type
+ghidra-cli type delete <name>              # Delete type
 ```
 
 ### Cross-References
 ```bash
-ghidra x-ref to <address>              # References TO address
-ghidra x-ref from <address>            # References FROM address
+ghidra-cli x-ref to <address>              # References TO address
+ghidra-cli x-ref from <address>            # References FROM address
 ```
 
 ### Search
 ```bash
-ghidra find string "pattern"           # Find strings
-ghidra strings list                    # List all defined strings
-ghidra strings refs "pattern"          # Show xrefs to strings matching pattern
-ghidra find bytes "90 90 90"           # Find byte patterns
-ghidra find function "*crypt*"         # Find functions by name
-ghidra find crypto                     # Find crypto constants
-ghidra find interesting                # Find interesting patterns
+ghidra-cli find string "pattern"           # Find strings
+ghidra-cli strings list                    # List all defined strings
+ghidra-cli strings refs "pattern"          # Show xrefs to strings matching pattern
+ghidra-cli find bytes "90 90 90"           # Find byte patterns
+ghidra-cli find function "*crypt*"         # Find functions by name
+ghidra-cli find crypto                     # Find crypto constants
+ghidra-cli find interesting                # Find interesting patterns
 ```
 
 ### Call Graphs
 ```bash
-ghidra graph calls                     # Full call graph
-ghidra graph callers <func>            # Who calls this? (--depth optional)
-ghidra graph callees <func>            # What does this call? (--depth optional)
-ghidra graph export dot                # Export to DOT format
+ghidra-cli graph calls                     # Full call graph
+ghidra-cli graph callers <func>            # Who calls this? (--depth optional)
+ghidra-cli graph callees <func>            # What does this call? (--depth optional)
+ghidra-cli graph export dot                # Export to DOT format
 ```
 
 ### Binary Patching
 ```bash
-ghidra patch bytes <addr> "90 90"      # Patch bytes
-ghidra patch nop <addr> --count 5      # NOP out instructions
-ghidra patch export -o patched.bin     # Export patched binary
+ghidra-cli patch bytes <addr> "90 90"      # Patch bytes
+ghidra-cli patch nop <addr> --count 5      # NOP out instructions
+ghidra-cli patch export -o patched.bin     # Export patched binary
 ```
 
 ### Comments
 ```bash
-ghidra comment get <address>           # Get comment at address
-ghidra comment set <addr> "note" --comment-type EOL  # Set comment (types: EOL, PRE, POST, PLATE)
-ghidra comment delete <address>        # Delete comment
-ghidra comment list                    # List all comments (no default limit; use --limit N to cap)
+ghidra-cli comment get <address>           # Get comment at address
+ghidra-cli comment set <addr> "note" --comment-type EOL  # Set comment (types: EOL, PRE, POST, PLATE)
+ghidra-cli comment delete <address>        # Delete comment
+ghidra-cli comment list                    # List all comments (no default limit; use --limit N to cap)
 ```
 
 ### Scripts
 ```bash
-ghidra script list                     # List available scripts
-ghidra script run myscript.py          # Run script file
-ghidra script python "print(currentProgram)"  # Inline Python
+ghidra-cli script list                     # List available scripts
+ghidra-cli script run myscript.py          # Run script file
+ghidra-cli script python "print(currentProgram)"  # Inline Python
 ```
 
 ### Batch Operations
 ```bash
-ghidra batch commands.txt              # Run commands from file
+ghidra-cli batch commands.txt              # Run commands from file
 ```
 
 ### Statistics
 ```bash
-ghidra stats                           # Program statistics
-ghidra summary                         # Program summary
+ghidra-cli stats                           # Program statistics
+ghidra-cli summary                         # Program summary
 ```
 
 ## Bridge Management
@@ -204,20 +204,20 @@ The bridge keeps Ghidra loaded in memory. It starts automatically when needed, b
 
 ```bash
 # Start bridge with a program loaded
-ghidra start --project myproject --program mybinary
+ghidra-cli start --project myproject --program mybinary
 
 # Check bridge status
-ghidra status --project myproject
+ghidra-cli status --project myproject
 
 # All commands use the bridge automatically
-ghidra function list --project myproject    # Fast!
-ghidra decompile main --project myproject   # Fast!
+ghidra-cli function list --project myproject    # Fast!
+ghidra-cli decompile main --project myproject   # Fast!
 
 # Stop bridge
-ghidra stop --project myproject
+ghidra-cli stop --project myproject
 
 # Restart with different program
-ghidra restart --project myproject --program otherbinary
+ghidra-cli restart --project myproject --program otherbinary
 ```
 
 ### Multi-Project Support
@@ -226,14 +226,14 @@ Each project gets its own bridge process and port file, allowing concurrent anal
 
 ```bash
 # Work on multiple projects simultaneously
-ghidra import ./binary_a --project projA
-ghidra analyze --project projA --program binary_a
-ghidra import ./binary_b --project projB
-ghidra analyze --project projB --program binary_b
+ghidra-cli import ./binary_a --project projA
+ghidra-cli analyze --project projA --program binary_a
+ghidra-cli import ./binary_b --project projB
+ghidra-cli analyze --project projB --program binary_b
 
 # Query each independently
-ghidra function list --project projA
-ghidra function list --project projB
+ghidra-cli function list --project projA
+ghidra-cli function list --project projB
 ```
 
 ## Output Formats
@@ -248,13 +248,13 @@ Default output is human-readable when connected to a terminal. When piped (non-T
 Override with flags:
 ```bash
 # Force JSON output (compact, single-line)
-ghidra function list --json
+ghidra-cli function list --json
 
 # Force pretty JSON (indented, multi-line)
-ghidra function list --pretty
+ghidra-cli function list --pretty
 
 # Select specific fields
-ghidra function list --fields "name,address,size"
+ghidra-cli function list --fields "name,address,size"
 ```
 
 ### Output Format Design
@@ -266,9 +266,9 @@ Format detection occurs at the CLI boundary. The bridge always returns compact J
 Use expressions to filter results:
 
 ```bash
-ghidra function list --filter "size > 100"
-ghidra function list --filter "name ~ 'main'"
-ghidra strings list --filter "length > 20"
+ghidra-cli function list --filter "size > 100"
+ghidra-cli function list --filter "name ~ 'main'"
+ghidra-cli strings list --filter "length > 20"
 ```
 
 ## AI Agent Integration
@@ -276,12 +276,12 @@ ghidra strings list --filter "length > 20"
 Ghidra CLI is designed to work seamlessly with AI coding assistants like Claude Code. The structured output and comprehensive command set make it ideal for automated reverse engineering workflows.
 
 Example workflow with an AI agent:
-1. `ghidra import suspicious.exe --project analysis` + `ghidra analyze --project analysis` - Import, analyze, start bridge
-2. `ghidra find interesting` - AI analyzes suspicious patterns
-3. `ghidra decompile <func>` - AI examines specific functions
-4. `ghidra x-ref to <addr>` - AI traces data flow
-5. `ghidra patch nop <addr>` - AI patches anti-debug code
-6. `ghidra patch export -o patched.bin` - Export patched binary
+1. `ghidra-cli import suspicious.exe --project analysis` + `ghidra-cli analyze --project analysis` - Import, analyze, start bridge
+2. `ghidra-cli find interesting` - AI analyzes suspicious patterns
+3. `ghidra-cli decompile <func>` - AI examines specific functions
+4. `ghidra-cli x-ref to <addr>` - AI traces data flow
+5. `ghidra-cli patch nop <addr>` - AI patches anti-debug code
+6. `ghidra-cli patch export -o patched.bin` - Export patched binary
 
 ## Troubleshooting
 
@@ -330,7 +330,7 @@ WSL requires X11 libraries even for headless operation because Java AWT is loade
 Use the doctor command to verify your installation:
 
 ```bash
-ghidra doctor
+ghidra-cli doctor
 ```
 
 This checks:

@@ -42,7 +42,7 @@ fn test_daemon_start() {
         return;
     };
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("status")
         .arg("--project")
         .arg(TEST_PROJECT)
@@ -63,7 +63,7 @@ fn test_daemon_status() {
         return;
     };
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("status")
         .arg("--project")
         .arg(TEST_PROJECT)
@@ -85,7 +85,7 @@ fn test_daemon_ping() {
         return;
     };
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("ping")
         .arg("--project")
         .arg(TEST_PROJECT)
@@ -106,7 +106,7 @@ fn test_daemon_lifecycle() {
         return;
     };
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("status")
         .arg("--project")
         .arg(TEST_PROJECT)
@@ -114,14 +114,14 @@ fn test_daemon_lifecycle() {
         .success()
         .stdout(predicate::str::contains("running"));
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("ping")
         .arg("--project")
         .arg(TEST_PROJECT)
         .assert()
         .success();
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("stop")
         .arg("--project")
         .arg(TEST_PROJECT)
@@ -140,14 +140,14 @@ fn test_daemon_stop() {
         return;
     };
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("stop")
         .arg("--project")
         .arg(TEST_PROJECT)
         .assert()
         .success();
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("status")
         .arg("--project")
         .arg(TEST_PROJECT)
@@ -192,7 +192,7 @@ fn test_daemon_restart() {
         return;
     }
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("stop")
         .arg("--project")
         .arg(TEST_PROJECT)
@@ -213,7 +213,7 @@ fn test_daemon_start_when_running() {
         return;
     };
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("start")
         .arg("--project")
         .arg(TEST_PROJECT)

@@ -28,7 +28,7 @@ fn test_symbol_list() {
     require_ghidra!();
     let _harness = harness();
 
-    let output = assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    let output = assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("symbol")
         .arg("list")
         .arg("--project")
@@ -58,7 +58,7 @@ fn test_symbol_create_and_get() {
 
     let addr = get_function_address(harness, TEST_PROJECT, TEST_PROGRAM, "main");
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("symbol")
         .arg("create")
         .arg(&addr)
@@ -70,7 +70,7 @@ fn test_symbol_create_and_get() {
         .assert()
         .success();
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("symbol")
         .arg("get")
         .arg("test_symbol")
@@ -96,7 +96,7 @@ fn test_symbol_rename() {
     let old_name = format!("old_sym_{}", std::process::id());
     let new_name = format!("new_sym_{}", std::process::id());
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("symbol")
         .arg("create")
         .arg(addr)
@@ -108,7 +108,7 @@ fn test_symbol_rename() {
         .assert()
         .success();
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("symbol")
         .arg("rename")
         .arg(&old_name)
@@ -121,7 +121,7 @@ fn test_symbol_rename() {
         .success();
 
     // Verify new symbol exists
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("symbol")
         .arg("get")
         .arg(&new_name)
@@ -140,7 +140,7 @@ fn test_symbol_get_nonexistent() {
     require_ghidra!();
     let _harness = harness();
 
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra")
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("symbol")
         .arg("get")
         .arg("nonexistent_symbol_12345")

@@ -59,10 +59,9 @@
             paths = [ ghidra-cli ];
             buildInputs = [ pkgs.makeWrapper ];
             postBuild = ''
-              wrapProgram $out/bin/ghidra \
+              wrapProgram $out/bin/ghidra-cli \
                 --set GHIDRA_INSTALL_DIR "${pkgs.ghidra}/lib/ghidra" \
                 --prefix PATH : "${pkgs.jdk}/bin"
-              mv $out/bin/ghidra $out/bin/ghidra-cli
             '';
           };
         in
