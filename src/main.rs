@@ -458,6 +458,64 @@ fn extract_query_options(command: &Commands) -> Option<QueryOptions> {
     }
 }
 
+/// Read program names from a Ghidra project's .prp metadata files.
+/// Each program is stored as <project>.rep/idata/00/XXXXXXXX.prp with a NAME attribute.
+/// This is a pure local filesystem operation — no bridge required.
+fn list_programs_from_project(project_path: &std::path::Path) -> anyhow::Result<Vec<String>> {
+    // Ghidra stores project data in <project>.rep/ next to the .gpr file.
+    // project_path is e.g. ~/projects/jamf (without .rep suffix).
+    let rep_dir = project_path.with_extension("rep");
+    let idata_dir = rep_dir.join("idata").join("00");
+    if !idata_dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(&idata_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("prp") {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            // Look for: <STATE NAME="NAME" TYPE="string" VALUE="<name>" />
+            if let Some(name) = content
+                .lines()
+                .find(|l| l.contains("NAME=\"NAME\"") && l.contains("TYPE=\"string\""))
+                .and_then(|l| {
+                    let start = l.find("VALUE=\"")? + 7;
+                    let rest = &l[start..];
+                    let end = rest.find('"')?;
+                    Some(rest[..end].to_string())
+                })
+            {
+                names.push(name);
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// Determine which program to load: explicit CLI arg wins; otherwise read project metadata.
+/// Auto-selects if exactly one program exists; errors with a list if multiple exist.
+fn resolve_program_for_bridge(
+    explicit: Option<String>,
+    project_path: &std::path::Path,
+) -> anyhow::Result<String> {
+    if let Some(prog) = explicit {
+        return Ok(prog);
+    }
+    let names = list_programs_from_project(project_path)?;
+    match names.len() {
+        0 => anyhow::bail!("No programs found in project. Import a binary first."),
+        1 => Ok(names.into_iter().next().unwrap()),
+        _ => anyhow::bail!(
+            "Multiple programs in project — specify one with --program:\n  {}",
+            names.join("\n  ")
+        ),
+    }
+}
+
 /// Run a command that requires the bridge.
 fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
     let config = Config::load()?;
@@ -565,21 +623,19 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
                 verify_bridge(&client)?;
                 client
             } else {
-                // Auto-start bridge - use specific program if available, otherwise project mode
-                let mode = if let Some(program) = extract_program_from_command(&cli.command)
-                    .or_else(|| config.get_default_program())
-                {
-                    BridgeStartMode::Process {
-                        program_name: program,
-                    }
-                } else {
-                    BridgeStartMode::Project
-                };
-
+                // Auto-start bridge. Resolve program from CLI arg or project metadata.
+                let program = resolve_program_for_bridge(
+                    extract_program_from_command(&cli.command),
+                    &project_path,
+                )?;
                 if !cli.quiet {
                     eprintln!("Starting Ghidra bridge...");
                 }
-                let port = bridge::ensure_bridge_running(&project_path, &ghidra_install_dir, mode)?;
+                let port = bridge::ensure_bridge_running(
+                    &project_path,
+                    &ghidra_install_dir,
+                    BridgeStartMode::Process { program_name: program },
+                )?;
                 if !cli.quiet {
                     eprintln!("Bridge ready.");
                 }
@@ -610,17 +666,15 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
                     // Running bridge may be from an older script; force restart to load
                     // the embedded bridge matching this CLI version.
                     let _ = bridge::stop_bridge(&project_path);
-                    let mode = if let Some(program) = extract_program_from_command(&cli.command)
-                        .or_else(|| config.get_default_program())
-                    {
-                        BridgeStartMode::Process {
-                            program_name: program,
-                        }
-                    } else {
-                        BridgeStartMode::Project
-                    };
-                    let port =
-                        bridge::ensure_bridge_running(&project_path, &ghidra_install_dir, mode)?;
+                    let program = resolve_program_for_bridge(
+                        extract_program_from_command(&cli.command),
+                        &project_path,
+                    )?;
+                    let port = bridge::ensure_bridge_running(
+                        &project_path,
+                        &ghidra_install_dir,
+                        BridgeStartMode::Process { program_name: program },
+                    )?;
                     let retry_client = BridgeClient::new(port);
 
                     if let Some(requested_program) = extract_program_from_command(&cli.command) {
@@ -1128,13 +1182,8 @@ fn handle_bridge_start(project: Option<String>, program: Option<String>) -> anyh
     }
 
     // Determine start mode
-    let mode = if let Some(prog) = program {
-        BridgeStartMode::Process { program_name: prog }
-    } else if let Some(prog) = config.get_default_program() {
-        BridgeStartMode::Process { program_name: prog }
-    } else {
-        BridgeStartMode::Project
-    };
+    let program = resolve_program_for_bridge(program, &project_path)?;
+    let mode = BridgeStartMode::Process { program_name: program };
 
     println!("Starting bridge for project: {}", project_path.display());
 
@@ -1418,7 +1467,11 @@ fn handle_config_command(cmd: cli::ConfigCommands) -> anyhow::Result<()> {
                 }
                 "ghidra_install_dir" => config.ghidra_install_dir = Some(PathBuf::from(value)),
                 "ghidra_project_dir" => config.ghidra_project_dir = Some(PathBuf::from(value)),
-                "default_program" => config.default_program = Some(value),
+                "default_program" => anyhow::bail!(
+                    "default_program config key is no longer supported. \
+                    ghidra-cli auto-selects when a project has one program, \
+                    or use --program to specify."
+                ),
                 "default_project" => config.default_project = Some(value),
                 "default_limit" => {
                     let limit: usize = value
@@ -1447,15 +1500,17 @@ fn handle_set_default(args: cli::SetDefaultArgs) -> anyhow::Result<()> {
     let mut config = Config::load()?;
 
     match args.kind.as_str() {
-        "program" => {
-            config.default_program = Some(args.value.clone());
-            config.save()?;
-            println!("Default program set to: {}", args.value);
-        }
         "project" => {
             config.default_project = Some(args.value.clone());
             config.save()?;
             println!("Default project set to: {}", args.value);
+        }
+        "program" => {
+            anyhow::bail!(
+                "Setting a default program is no longer supported. \
+                ghidra-cli auto-selects the program when a project has exactly one, \
+                or requires --program when there are multiple."
+            );
         }
         _ => {
             anyhow::bail!(format!("Unknown default kind: {}", args.kind));
@@ -1617,6 +1672,7 @@ fn verify_bridge(client: &BridgeClient) -> anyhow::Result<()> {
 fn resolve_project_path(project: &Option<String>, config: &Config) -> anyhow::Result<PathBuf> {
     let project_name = project
         .clone()
+        .or_else(|| std::env::var("GHIDRA_DEFAULT_PROJECT").ok())
         .or_else(|| config.default_project.clone())
         .ok_or_else(|| anyhow::anyhow!("No project specified and no default project configured"))?;
 

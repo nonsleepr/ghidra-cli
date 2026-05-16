@@ -106,14 +106,15 @@ fn test_set_default_program() {
     let temp = tempfile::tempdir().unwrap();
     let config_path = temp.path().join("config.yaml");
 
+    // Setting a default program is no longer supported — auto-selection handles it.
     assert_cmd::cargo::cargo_bin_cmd!("ghidra")
         .env("GHIDRA_CLI_CONFIG", &config_path)
         .arg("set-default")
         .arg("program")
         .arg("sample_binary")
         .assert()
-        .success()
-        .stdout(predicate::str::contains("Default program set"));
+        .failure()
+        .stderr(predicate::str::contains("no longer supported"));
 }
 
 #[test]

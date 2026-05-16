@@ -7,7 +7,6 @@ use std::path::PathBuf;
 pub struct Config {
     pub ghidra_install_dir: Option<PathBuf>,
     pub ghidra_project_dir: Option<PathBuf>,
-    pub default_program: Option<String>,
     pub default_project: Option<String>,
     pub default_output_format: Option<String>,
     pub default_limit: Option<usize>,
@@ -20,7 +19,6 @@ impl Default for Config {
         Self {
             ghidra_install_dir: None,
             ghidra_project_dir: None,
-            default_program: None,
             default_project: None,
             default_output_format: Some("auto".to_string()),
             default_limit: Some(1000),
@@ -154,12 +152,6 @@ impl Config {
         }
 
         None
-    }
-
-    pub fn get_default_program(&self) -> Option<String> {
-        std::env::var("GHIDRA_DEFAULT_PROGRAM")
-            .ok()
-            .or_else(|| self.default_program.clone())
     }
 }
 

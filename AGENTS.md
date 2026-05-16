@@ -114,8 +114,19 @@ cargo test -- --test-threads=1
 | `GHIDRA_INSTALL_DIR` | Ghidra installation path (auto-set by Nix flake) |
 | `GHIDRA_PROJECT_DIR` | Base directory for projects |
 | `GHIDRA_DEFAULT_PROJECT` | Default `--project` value |
-| `GHIDRA_DEFAULT_PROGRAM` | Default `--program` value |
 | `GHIDRA_CLI_CONFIG` | Override config file path |
 
 Config: `~/.config/ghidra-cli/config.yaml`
 `default_limit: 1000` applies to function/string/symbol list commands. **Not** applied to `comment list`.
+
+## Program selection
+
+There is no `default_program` config key. The bridge selects the program as follows:
+
+1. **`--program NAME` is given** → load that program directly.
+2. **No `--program`** → read `<project>.rep/idata/00/*.prp` metadata locally (no bridge needed), then:
+   - Exactly 1 program → auto-select it.
+   - Multiple programs → error listing all names; user must add `--program`.
+   - 0 programs → error "No programs found. Import a binary first."
+
+`set-default program` is intentionally removed. `set-default project` still works.

@@ -21,8 +21,6 @@ pub enum BridgeStartMode {
     Import { binary_path: String },
     /// Open an existing program in the project
     Process { program_name: String },
-    /// Open the project without loading a specific program
-    Project,
 }
 
 /// Embedded Java bridge script
@@ -300,9 +298,6 @@ pub fn start_bridge(
         }
         BridgeStartMode::Process { program_name } => {
             cmd.arg("-process").arg(program_name).arg("-noanalysis");
-        }
-        BridgeStartMode::Project => {
-            cmd.arg("-process").arg("-noanalysis");
         }
     }
 

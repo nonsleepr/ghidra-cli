@@ -271,9 +271,9 @@ ghidra doctor                     # check installation
 ghidra version
 ghidra config list
 ghidra config get KEY
-ghidra config set KEY VALUE       # keys: ghidra_install_dir, ghidra_project_dir, default_program, default_project, default_output_format, timeout, default_limit
+ghidra config set KEY VALUE       # keys: ghidra_install_dir, ghidra_project_dir, default_project, default_output_format, timeout, default_limit
 ghidra config reset
-ghidra set-default KIND VALUE     # KIND: program, project
+ghidra set-default project VALUE  # sets default project (program auto-selected when project has exactly one)
 ghidra setup [--version V] [--dir D] [--force]
 ```
 
@@ -362,12 +362,12 @@ ghidra function list --fields name,address --json --project P
 
 ### 4. Set Defaults
 
-Avoid repeating `--project` and `--program`:
+Set default project (program auto-selected when project has exactly one program):
 
 ```bash
 ghidra set-default project myproject
-ghidra set-default program mybinary
-# Now: ghidra function list  (no flags needed)
+# Now: ghidra function list  (no --project flag needed)
+# If project has multiple programs, add --program explicitly
 ```
 
 ## .NET Warning
