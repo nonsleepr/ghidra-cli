@@ -67,6 +67,10 @@ pub enum Commands {
     #[command(subcommand, alias = "types")]
     Type(TypeCommands),
 
+    /// Bookmark operations (list, add, delete)
+    #[command(subcommand, alias = "bm")]
+    Bookmark(BookmarkCommands),
+
     /// PCode operations (intermediate representation)
     #[command(subcommand)]
     Pcode(PcodeCommands),
@@ -824,6 +828,62 @@ pub struct AnalyzerSetArgs {
 
 #[derive(Args, Clone, Serialize, Deserialize, Debug)]
 pub struct AnalyzerRunArgs {
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Subcommand, Clone, Serialize, Deserialize, Debug)]
+pub enum BookmarkCommands {
+    /// List bookmarks
+    #[command(alias = "ls")]
+    List(BookmarkListArgs),
+    /// Add a bookmark
+    Add(BookmarkAddArgs),
+    /// Delete bookmark(s) at address
+    Delete(BookmarkDeleteArgs),
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct BookmarkListArgs {
+    /// Filter by bookmark type (e.g. "Note", "Warning")
+    #[arg(long, alias = "type")]
+    pub bookmark_type: Option<String>,
+    #[arg(long)]
+    pub limit: Option<usize>,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct BookmarkAddArgs {
+    /// Address to bookmark
+    pub address: String,
+    /// Bookmark type (default: "Note")
+    #[arg(long, alias = "type", default_value = "Note")]
+    pub bookmark_type: String,
+    /// Category
+    #[arg(long)]
+    pub category: Option<String>,
+    /// Comment text
+    #[arg(long)]
+    pub comment: Option<String>,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct BookmarkDeleteArgs {
+    /// Address
+    pub address: String,
+    /// Filter by bookmark type
+    #[arg(long, alias = "type")]
+    pub bookmark_type: Option<String>,
     #[arg(long)]
     pub program: Option<String>,
     #[arg(long)]

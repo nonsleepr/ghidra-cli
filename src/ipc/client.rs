@@ -432,6 +432,46 @@ impl BridgeClient {
         self.send_command("analyze_run", None)
     }
 
+    pub fn bookmark_list(
+        &self,
+        bookmark_type: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<serde_json::Value> {
+        self.send_command(
+            "bookmark_list",
+            Some(json!({"type": bookmark_type, "limit": limit})),
+        )
+    }
+
+    pub fn bookmark_add(
+        &self,
+        address: &str,
+        bookmark_type: Option<&str>,
+        category: Option<&str>,
+        comment: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        self.send_command(
+            "bookmark_add",
+            Some(json!({
+                "address": address,
+                "type": bookmark_type,
+                "category": category,
+                "comment": comment,
+            })),
+        )
+    }
+
+    pub fn bookmark_delete(
+        &self,
+        address: &str,
+        bookmark_type: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        self.send_command(
+            "bookmark_delete",
+            Some(json!({"address": address, "type": bookmark_type})),
+        )
+    }
+
     pub fn program_close(&self) -> Result<serde_json::Value> {
         self.send_command("close_program", None)
     }

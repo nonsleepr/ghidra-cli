@@ -129,6 +129,7 @@ fn requires_bridge(command: &Commands) -> bool {
             | Commands::Rename(_)
             | Commands::Pcode(_)
             | Commands::Analyzer(_)
+            | Commands::Bookmark(_)
     )
 }
 
@@ -251,6 +252,11 @@ fn extract_project_from_command(command: &Commands) -> Option<String> {
             cli::AnalyzerCommands::Set(args) => args.project.clone(),
             cli::AnalyzerCommands::Run(args) => args.project.clone(),
         },
+        Commands::Bookmark(cmd) => match cmd {
+            cli::BookmarkCommands::List(args) => args.project.clone(),
+            cli::BookmarkCommands::Add(args) => args.project.clone(),
+            cli::BookmarkCommands::Delete(args) => args.project.clone(),
+        },
         _ => None,
     }
 }
@@ -370,6 +376,11 @@ fn extract_program_from_command(command: &Commands) -> Option<String> {
             cli::AnalyzerCommands::List(args) => args.program.clone(),
             cli::AnalyzerCommands::Set(args) => args.program.clone(),
             cli::AnalyzerCommands::Run(args) => args.program.clone(),
+        },
+        Commands::Bookmark(cmd) => match cmd {
+            cli::BookmarkCommands::List(args) => args.program.clone(),
+            cli::BookmarkCommands::Add(args) => args.program.clone(),
+            cli::BookmarkCommands::Delete(args) => args.program.clone(),
         },
         _ => None,
     }
@@ -1053,6 +1064,20 @@ fn execute_via_bridge(
                 AnalyzerCommands::List(_) => client.analyzer_list(),
                 AnalyzerCommands::Set(args) => client.analyzer_set(&args.name, args.enabled),
                 AnalyzerCommands::Run(_) => client.analyze_run(),
+            }
+        }
+        Commands::Bookmark(cmd) => {
+            use cli::BookmarkCommands;
+            match cmd {
+                BookmarkCommands::List(args) => {
+                    client.bookmark_list(args.bookmark_type.as_deref(), args.limit)
+                }
+                BookmarkCommands::Add(args) => {
+                    client.bookmark_add(&args.address, Some(args.bookmark_type.as_str()), args.category.as_deref(), args.comment.as_deref())
+                }
+                BookmarkCommands::Delete(args) => {
+                    client.bookmark_delete(&args.address, args.bookmark_type.as_deref())
+                }
             }
         }
         _ => anyhow::bail!("Command not supported"),
