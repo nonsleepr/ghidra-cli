@@ -42,17 +42,27 @@ The CLI connects directly to a Java bridge running inside Ghidra's JVM. This pro
 
 ## Installation
 
+### Nix Flake (recommended)
+
+```bash
+# Run directly
+nix run github:nonsleepr/ghidra-cli
+
+# Install into profile (binary named ghidra-cli, sets GHIDRA_INSTALL_DIR automatically)
+nix profile install github:nonsleepr/ghidra-cli
+```
+
 ### From Source
 
 ```bash
-git clone https://github.com/akiselev/ghidra-cli
+git clone https://github.com/nonsleepr/ghidra-cli
 cd ghidra-cli
 cargo install --path .
 ```
 
 ### Requirements
 
-- **Ghidra 10.0+** - Download from [ghidra-sre.org](https://ghidra-sre.org)
+- **Ghidra 12.0+** - Download from [ghidra-sre.org](https://ghidra-sre.org)
 - **Java 17+** - Required by Ghidra
 - **Rust 1.70+** - For building from source
 
@@ -104,6 +114,7 @@ ghidra analyze --project <p>           # Run analysis
 ```bash
 ghidra function list                   # List all functions
 ghidra function list --filter "size > 100"  # Filter by size
+ghidra function calls <name>           # List calls made by function
 ghidra decompile <name-or-addr>        # Decompile function
 ghidra decompile main --with-vars --with-params  # Include variable/param details
 ghidra disasm <address> --instructions 20  # Disassemble instructions
@@ -138,6 +149,8 @@ ghidra x-ref from <address>            # References FROM address
 ### Search
 ```bash
 ghidra find string "pattern"           # Find strings
+ghidra strings list                    # List all defined strings
+ghidra strings refs "pattern"          # Show xrefs to strings matching pattern
 ghidra find bytes "90 90 90"           # Find byte patterns
 ghidra find function "*crypt*"         # Find functions by name
 ghidra find crypto                     # Find crypto constants
@@ -161,9 +174,10 @@ ghidra patch export -o patched.bin     # Export patched binary
 
 ### Comments
 ```bash
-ghidra comment get <address>           # Get comment
-ghidra comment set <addr> "note" --comment-type EOL  # Set comment
-ghidra comment list                    # List all comments
+ghidra comment get <address>           # Get comment at address
+ghidra comment set <addr> "note" --comment-type EOL  # Set comment (types: EOL, PRE, POST, PLATE)
+ghidra comment delete <address>        # Delete comment
+ghidra comment list                    # List all comments (no default limit; use --limit N to cap)
 ```
 
 ### Scripts
