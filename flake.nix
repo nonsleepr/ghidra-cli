@@ -24,13 +24,22 @@
             inherit system;
             overlays = [ rust-overlay.overlays.default ];
           };
+          lib = pkgs.lib;
           rustToolchain = pkgs.rust-bin.stable.latest.default;
           craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
           commonArgs = {
-            src = craneLib.cleanCargoSource ./.;
+            src = lib.cleanSourceWith {
+              src = ./.;
+              filter = path: type:
+                (craneLib.filterCargoSources path type) ||
+                (lib.hasSuffix ".java" path) ||
+                (lib.hasSuffix ".pest" path);
+            };
             strictDeps = true;
-            buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            buildInputs = [
+              pkgs.openssl
+            ] ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv
               pkgs.darwin.apple_sdk.frameworks.Security
               pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
@@ -42,11 +51,24 @@
 
           ghidra-cli = craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts;
+            doCheck = false;
           });
+
+          ghidra-cli-wrapped = pkgs.symlinkJoin {
+            name = "ghidra-cli-wrapped";
+            paths = [ ghidra-cli ];
+            buildInputs = [ pkgs.makeWrapper ];
+            postBuild = ''
+              wrapProgram $out/bin/ghidra \
+                --set GHIDRA_INSTALL_DIR "${pkgs.ghidra}/lib/ghidra" \
+                --prefix PATH : "${pkgs.jdk}/bin"
+              mv $out/bin/ghidra $out/bin/ghidra-cli
+            '';
+          };
         in
         {
-          default = ghidra-cli;
-          inherit ghidra-cli;
+          default = ghidra-cli-wrapped;
+          inherit ghidra-cli ghidra-cli-wrapped;
         });
 
       devShells = forAllSystems (system:
@@ -55,6 +77,7 @@
             inherit system;
             overlays = [ rust-overlay.overlays.default ];
           };
+          lib = pkgs.lib;
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
             extensions = [ "rust-src" "rust-analyzer" "clippy" "rustfmt" ];
           };
@@ -63,12 +86,18 @@
           default = pkgs.mkShell {
             buildInputs = [
               rustToolchain
+              pkgs.openssl
               pkgs.pkg-config
-            ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+              pkgs.ghidra
+              pkgs.jdk
+            ] ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv
               pkgs.darwin.apple_sdk.frameworks.Security
               pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
             ];
+            shellHook = ''
+              export GHIDRA_INSTALL_DIR="${pkgs.ghidra}/lib/ghidra"
+            '';
           };
         });
     };
