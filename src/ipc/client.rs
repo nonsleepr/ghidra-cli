@@ -145,14 +145,14 @@ impl BridgeClient {
     }
 
     /// List imports.
-    pub fn list_imports(&self) -> Result<serde_json::Value> {
-        self.send_command("list_imports", None)
-    }
-
-    /// List exports.
-    pub fn list_exports(&self) -> Result<serde_json::Value> {
-        self.send_command("list_exports", None)
-    }
+     pub fn list_imports(&self, limit: Option<usize>) -> Result<serde_json::Value> {
+         self.send_command("list_imports", Some(json!({"limit": limit})))
+     }
+ 
+     /// List exports.
+     pub fn list_exports(&self, limit: Option<usize>) -> Result<serde_json::Value> {
+         self.send_command("list_exports", Some(json!({"limit": limit})))
+     }
 
     /// Get memory map.
     pub fn memory_map(&self) -> Result<serde_json::Value> {
@@ -165,9 +165,15 @@ impl BridgeClient {
     }
 
     /// Get cross-references to an address.
-    pub fn xrefs_to(&self, address: String) -> Result<serde_json::Value> {
-        self.send_command("xrefs_to", Some(json!({"address": address})))
-    }
+     pub fn xrefs_to(&self, address: String) -> Result<serde_json::Value> {
+         self.send_command("xrefs_to", Some(json!({"address": address})))
+     }
+
+     /// Get cross-references to all strings matching a pattern.
+     pub fn string_refs(&self, pattern: String) -> Result<serde_json::Value> {
+         self.send_command("string_refs", Some(json!({"string": pattern})))
+     }
+
 
     /// Get cross-references from an address.
     pub fn xrefs_from(&self, address: String) -> Result<serde_json::Value> {

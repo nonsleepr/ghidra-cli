@@ -725,8 +725,8 @@ fn execute_via_bridge(
         Commands::Query(args) => match args.data_type.as_str() {
             "functions" => client.list_functions(args.limit.or(default_limit), args.filter.clone()),
             "strings" => client.list_strings(args.limit.or(default_limit), args.filter.clone()),
-            "imports" => client.list_imports(),
-            "exports" => client.list_exports(),
+            "imports" => client.list_imports(args.limit.or(default_limit)),
+            "exports" => client.list_exports(args.limit.or(default_limit)),
             "memory" => client.memory_map(),
             other => anyhow::bail!("Query type '{}' not supported", other),
         },
@@ -812,7 +812,7 @@ fn execute_via_bridge(
                 StringsCommands::List(opts) => {
                     client.list_strings(opts.limit.or(default_limit), opts.filter.clone())
                 }
-                StringsCommands::Refs(args) => client.xrefs_to(args.string.clone()),
+                StringsCommands::Refs(args) => client.string_refs(args.string.clone()),
             }
         }
         Commands::Memory(cmd) => {
@@ -844,8 +844,8 @@ fn execute_via_bridge(
         Commands::Dump(cmd) => {
             use cli::DumpCommands;
             match cmd {
-                DumpCommands::Imports(_) => client.list_imports(),
-                DumpCommands::Exports(_) => client.list_exports(),
+                DumpCommands::Imports(opts) => client.list_imports(opts.limit.or(default_limit)),
+                DumpCommands::Exports(opts) => client.list_exports(opts.limit.or(default_limit)),
                 DumpCommands::Functions(opts) => {
                     client.list_functions(opts.limit.or(default_limit), opts.filter.clone())
                 }

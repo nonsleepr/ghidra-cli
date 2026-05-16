@@ -20,12 +20,17 @@ A high-performance Rust CLI for automating Ghidra reverse engineering tasks, des
 
 ## Architecture
 
-```
-┌─────────────────┐         ┌──────────────────────────────────────┐
-│   CLI Command   │──TCP──▶ │  GhidraCliBridge.java                │
-│   ghidra ...    │         │  (GhidraScript in analyzeHeadless)   │
-│   --project X   │         │  ServerSocket on localhost:dynamic   │
-└─────────────────┘         └──────────────────────────────────────┘
+```mermaid
+flowchart LR
+    CLI["ghidra CLI\n(Rust/clap)"]
+    Bridge["GhidraCliBridge.java\n(GhidraScript in analyzeHeadless)"]
+    Project[("Ghidra Project\n~/.local/share/ghidra-projects/")]
+    Port["~/.local/share/ghidra-cli/\nbridge-{md5}.port"]
+
+    CLI -- "TCP JSON-RPC\nlocalhost:dynamic" --> Bridge
+    Bridge -- "reads/writes" --> Project
+    Bridge -- "writes port on start" --> Port
+    CLI -- "reads port to connect" --> Port
 ```
 
 The CLI connects directly to a Java bridge running inside Ghidra's JVM. This provides:
