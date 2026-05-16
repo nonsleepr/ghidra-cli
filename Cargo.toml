@@ -20,10 +20,6 @@ serde_yaml = "0.9"
 pest = "2.7"
 pest_derive = "2.7"
 
-# Output formatting
-tabled = "0.15"
-comfy-table = "7.1"
-
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"

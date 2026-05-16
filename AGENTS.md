@@ -5,7 +5,7 @@
 1. **NEVER SKIP TESTS.** `require_ghidra!()` panics when `ghidra doctor` fails — that is intentional. Tests must fail if Ghidra is not installed.
 2. **Run tests with `--test-threads=1`** — OSGi cache contention between test suites causes failures with parallel threads.
 3. **Never launch the `ghidra` Nix flake app from shell** — it starts the GUI. Use `./target/debug/ghidra-cli` for the CLI binary.
-4. **Default output is human-readable, not JSON.** Use `--json` / `--pretty` flags. Exception: non-TTY stdout auto-detects to compact JSON (Unix pipe convention).
+4. **Default output is human-readable, not JSON.** Use `--json` flag for JSONL output. Exception: non-TTY stdout auto-detects to JSONL (Unix pipe convention). Use `jq` for pretty-printing.
 
 ## Architecture
 

@@ -2,7 +2,7 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser)]
-#[command(name = "ghidra")]
+#[command(name = "ghidra-cli")]
 #[command(version, about = "Rust CLI for Ghidra reverse engineering", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
@@ -16,13 +16,9 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub quiet: bool,
 
-    /// Output as JSON
+    /// Output as JSONL (one JSON object per line); shorthand for -o json
     #[arg(long, global = true)]
     pub json: bool,
-
-    /// Output JSON with pretty formatting
-    #[arg(long, global = true)]
-    pub pretty: bool,
 }
 
 #[derive(Subcommand, Clone, Serialize, Deserialize, Debug)]
@@ -237,7 +233,7 @@ pub struct QueryArgs {
     #[arg(long)]
     pub count: bool,
 
-    /// Output as JSON (shorthand for --format=json)
+    /// Output as JSONL (shorthand for -o json)
     #[arg(long)]
     pub json: bool,
 }

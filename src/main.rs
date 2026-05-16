@@ -709,7 +709,7 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
         check_dotnet_decompile_warning(&cli.command, &result);
     }
 
-    // Determine output format: explicit -o flag > --json/--pretty > TTY detection
+    // Determine output format: explicit -o flag > --json > TTY detection
     let opts = extract_query_options(&cli.command);
     let explicit_format = opts
         .as_ref()
@@ -721,10 +721,8 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
 
     let format = if let Some(fmt) = explicit_format {
         fmt
-    } else if cli.pretty {
-        OutputFormat::Json
     } else if cli.json || opts.as_ref().is_some_and(|o| o.json) {
-        OutputFormat::JsonCompact
+        OutputFormat::Json
     } else {
         auto_detect_format(std::io::stdout().is_terminal())
     };

@@ -31,25 +31,15 @@ CLI (Rust/clap) ──TCP──► GhidraCliBridge.java (GhidraScript in Ghidra 
 - One bridge per project, keyed by `~/.local/share/ghidra-cli/bridge-{md5}.port`
 - Sequential command processing (Ghidra API is not thread-safe)
 
-## Output Formats (`-o FORMAT`)
+## Output Formats (`-o FORMAT` or `--json`)
 
 | Value | Use |
 |-------|-----|
 | `compact` | Default for TTY. One line per item. |
-| `full` | Multi-line labeled blocks |
-| `json` | Pretty JSON |
-| `json-compact` | Default for pipes. Single-line JSON. |
-| `json-stream` / `ndjson` | One JSON object per line |
-| `csv` / `tsv` | Delimited with header |
-| `table` | ASCII box-drawn table |
+| `json` | JSONL (one JSON object per line). Default for pipes. Use `jq` for pretty-printing: `ghidra-cli function list --json \| jq .` |
 | `count` | Number only |
-| `ids` / `minimal` | Address/name only, one per line |
-| `tree` | Indented hierarchy |
-| `hex` | Hex dump |
-| `asm` | Assembly |
-| `c` | C pseudocode |
 
-**Auto-detection**: TTY → `compact`; pipe → `json-compact`. Override with `--json`, `--pretty`, or `-o FORMAT`.
+Aliases: `jsonl`, `ndjson`, `json-stream` all map to `json`.
 
 ## Filter Expressions (`--filter EXPR`)
 

@@ -1,5 +1,4 @@
-//! Integration tests for output format
-//! Tests require real Ghidra installation
+//! Integration tests for output format flags
 
 /// Helper to verify Ghidra is installed before running tests
 fn require_ghidra() {
@@ -14,39 +13,43 @@ fn require_ghidra() {
 }
 
 #[test]
-fn test_format_detection_tty() {
+fn test_help_shows_json_flag() {
     require_ghidra();
 
-    // Test that --help shows both --json and --pretty flags
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli");
-    cmd.arg("--help");
-    cmd.assert().success();
-
-    let output = cmd.output().unwrap();
+    let output = assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
+        .arg("--help")
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("--json"), "Help should show --json flag");
     assert!(
-        stdout.contains("--pretty"),
-        "Help should show --pretty flag"
+        !stdout.contains("--pretty"),
+        "Help should not show removed --pretty flag"
     );
 }
 
 #[test]
-fn test_json_flag() {
+fn test_json_flag_accepted() {
     require_ghidra();
 
-    // Test --json flag is recognized
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli");
-    cmd.arg("--json").arg("--help");
-    cmd.assert().success();
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
+        .arg("--json")
+        .arg("--help")
+        .assert()
+        .success();
 }
 
 #[test]
-fn test_pretty_flag() {
+fn test_format_flag_accepted() {
     require_ghidra();
 
-    // Test --pretty flag is recognized
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli");
-    cmd.arg("--pretty").arg("--help");
-    cmd.assert().success();
+    // Valid formats should be accepted
+    for fmt in &["compact", "json", "count"] {
+        assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
+            .arg("version")
+            .arg("-o")
+            .arg(fmt)
+            .assert()
+            .success();
+    }
 }
