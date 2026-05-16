@@ -958,7 +958,10 @@ fn execute_via_bridge(
             use cli::CommentCommands;
             match cmd {
                 CommentCommands::List(opts) => {
-                    client.comment_list(opts.limit.or(default_limit), opts.filter.as_deref())
+                    // Do not apply default_limit for comment list: user-set comments
+                    // must always be visible regardless of how many auto-generated
+                    // comments (LSDA, DWARF) precede them in address order.
+                    client.comment_list(opts.limit, opts.filter.as_deref())
                 }
                 CommentCommands::Get(args) => client.comment_get(&args.address),
                 CommentCommands::Set(args) => {

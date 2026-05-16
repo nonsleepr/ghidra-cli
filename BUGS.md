@@ -62,3 +62,39 @@
 - Update client to pass `limit` in the args JSON.
 
 **Status:** Fixed.
+
+---
+
+## B-5: `comment list` omits user-set comments when binary has many auto-generated comments
+
+**Command:** `ghidra comment list`
+
+**Root cause:**
+Two separate issues combined to hide user-set comments:
+
+1. **`listing.getComment(CommentType, Address)` is unreliable for CodeUnit-backed addresses.**
+   `CodeManager.getComment()` calls `addrMap.getKey(address, false)` with `false` (don't create),
+   which can return an invalid key for addresses that were mapped via a different code path at
+   write time. This means `listing.getComment()` returns `null` even when a comment exists at
+   an instruction address. The correct API for reading comments at a known address is
+   `listing.getCodeUnitAt(addr).getComment(type)` (when a CodeUnit exists) or
+   `getCommentAddressIterator` for iteration. This appears to be a Ghidra API footgun rather
+   than a documented bug — `listing.getComment()` works for data/undefined addresses but is
+   unreliable for instruction addresses that have live CodeUnit objects.
+
+2. **`default_limit: 1000` in `config.yaml` silently truncated `comment list` output.**
+   Large Rust/C++ binaries analyzed by Ghidra accumulate thousands of auto-generated comments
+   (LSDA exception tables, DWARF annotations). `sample_binary` has ~13,000 comments; user-set
+   comments at function entry points (e.g., `_start` at `0x00118910`) were pushed past position
+   1000 in address order and never returned.
+
+**Fix:**
+- `handleCommentList` in the bridge uses `getCommentAddressIterator(memory, true)` for
+  iteration (correct — returns ALL commented addresses including instruction addresses), and
+  reads each comment via `getCodeUnitAt(addr).getComment(type)` to avoid the `listing.getComment`
+  reliability issue.
+- `main.rs`: `comment list` no longer applies `default_limit`; only an explicit `--limit` flag
+  is honored. Auto-generated comments should not silently hide user data.
+
+**Status:** Fixed.
+

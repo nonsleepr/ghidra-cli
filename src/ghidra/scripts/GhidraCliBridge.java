@@ -3192,6 +3192,7 @@ public class GhidraCliBridge extends GhidraScript {
         }
     }
 
+
     private JsonObject handleCommentList(JsonObject args) {
         if (currentProgram == null) return errorResult("No program loaded");
 
@@ -3206,38 +3207,31 @@ public class GhidraCliBridge extends GhidraScript {
         CommentType[] commentTypes = {CommentType.EOL, CommentType.PRE, CommentType.POST, CommentType.PLATE};
         String[] commentNames = {"EOL", "PRE", "POST", "PLATE"};
 
-        for (MemoryBlock block : memory.getBlocks()) {
+        // getCommentAddressIterator returns ALL addresses with any comment, including
+        // both auto-generated (LSDA, DWARF) and user-set.  It covers both the
+        // commentAdapter path (data/undefined) and CodeUnit-backed instruction addresses.
+        // Note: listing.getComment(type, addr) does NOT reliably retrieve CodeUnit
+        // comments (it uses addrMap.getKey(addr, false) which may miss instruction
+        // addresses); always use getCodeUnitAt(addr).getComment() for those.
+        ghidra.program.model.address.AddressIterator addrIter =
+            listing.getCommentAddressIterator(memory, true);
+        while (addrIter.hasNext()) {
             if (limit > 0 && count >= limit) break;
-
-            ghidra.program.model.address.AddressSet addrSet =
-                new ghidra.program.model.address.AddressSet(block.getStart(), block.getEnd());
-
-            ghidra.program.model.address.AddressIterator addrIter =
-                listing.getCommentAddressIterator(addrSet, true);
-
-            while (addrIter.hasNext()) {
+            Address addr = addrIter.next();
+            CodeUnit cu = listing.getCodeUnitAt(addr);
+            for (int i = 0; i < commentNames.length; i++) {
                 if (limit > 0 && count >= limit) break;
-
-                Address addr = addrIter.next();
-                CodeUnit cu = listing.getCodeUnitAt(addr);
-                if (cu == null) continue;
-
-                for (int i = 0; i < commentNames.length; i++) {
-                    if (limit > 0 && count >= limit) break;
-
-                    String text = cu.getComment(commentTypes[i]);
-                    if (text != null) {
-                        if (nameFilter != null && !text.toLowerCase().contains(nameFilter.toLowerCase())) {
-                            continue;
-                        }
-
-                        JsonObject commentObj = new JsonObject();
-                        commentObj.addProperty("address", addr.toString());
-                        commentObj.addProperty("type", commentNames[i]);
-                        commentObj.addProperty("text", text);
-                        comments.add(commentObj);
-                        count++;
-                    }
+                String text = (cu != null)
+                    ? cu.getComment(commentTypes[i])
+                    : listing.getComment(commentTypes[i], addr);
+                if (text != null) {
+                    if (nameFilter != null && !text.toLowerCase().contains(nameFilter.toLowerCase())) continue;
+                    JsonObject obj = new JsonObject();
+                    obj.addProperty("address", addr.toString());
+                    obj.addProperty("type", commentNames[i]);
+                    obj.addProperty("text", text);
+                    comments.add(obj);
+                    count++;
                 }
             }
         }
