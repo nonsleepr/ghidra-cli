@@ -246,7 +246,10 @@ pub fn ensure_bridge_running(
     // Re-check under the lock: another process may have started the bridge
     // while we were waiting.
     if let Some(port) = is_bridge_running(project_path) {
-        info!("Bridge already running on port {} (detected after lock)", port);
+        info!(
+            "Bridge already running on port {} (detected after lock)",
+            port
+        );
         return Ok(port);
     }
 

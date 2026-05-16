@@ -743,11 +743,20 @@ fn test_function_calls_returns_results() {
     result.assert_success();
     let calls: Vec<serde_json::Value> = result.json();
     // main calls several functions; results array must be non-empty
-    assert!(!calls.is_empty(), "function calls main should return non-empty results");
+    assert!(
+        !calls.is_empty(),
+        "function calls main should return non-empty results"
+    );
     // Each result should have callee and call_site fields
     let first = calls[0].as_object().expect("result should be an object");
-    assert!(first.contains_key("callee"), "result should have 'callee' field");
-    assert!(first.contains_key("call_site"), "result should have 'call_site' field");
+    assert!(
+        first.contains_key("callee"),
+        "result should have 'callee' field"
+    );
+    assert!(
+        first.contains_key("call_site"),
+        "result should have 'call_site' field"
+    );
 }
 
 /// B-1: graph callees returned [] due to only checking entry point refs.
@@ -767,7 +776,10 @@ fn test_graph_callees_returns_results() {
 
     result.assert_success();
     let callees: Vec<serde_json::Value> = result.json();
-    assert!(!callees.is_empty(), "graph callees main should return non-empty results");
+    assert!(
+        !callees.is_empty(),
+        "graph callees main should return non-empty results"
+    );
 }
 
 /// B-1: graph callers returned [] for functions called via PARAM/INDIRECTION refs.
@@ -788,7 +800,10 @@ fn test_graph_callers_returns_results() {
 
     result.assert_success();
     let callers: Vec<serde_json::Value> = result.json();
-    assert!(!callers.is_empty(), "graph callers add_numbers should return non-empty results");
+    assert!(
+        !callers.is_empty(),
+        "graph callers add_numbers should return non-empty results"
+    );
 }
 
 /// B-2: strings refs errored with "Cannot resolve function target".
@@ -840,7 +855,11 @@ fn test_dump_exports_limit() {
             .run();
         result_limited.assert_success();
         let limited: Vec<serde_json::Value> = result_limited.json();
-        assert_eq!(limited.len(), 2, "dump exports --limit 2 should return exactly 2 results");
+        assert_eq!(
+            limited.len(),
+            2,
+            "dump exports --limit 2 should return exactly 2 results"
+        );
     }
 }
 
@@ -871,9 +890,14 @@ fn test_dump_imports_limit() {
             .run();
         result_limited.assert_success();
         let limited: Vec<serde_json::Value> = result_limited.json();
-        assert_eq!(limited.len(), 2, "dump imports --limit 2 should return exactly 2 results");
+        assert_eq!(
+            limited.len(),
+            2,
+            "dump imports --limit 2 should return exactly 2 results"
+        );
     }
-}#[test]
+}
+#[test]
 #[serial]
 fn test_graph_export_dot() {
     require_ghidra!();

@@ -634,7 +634,9 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
                 let port = bridge::ensure_bridge_running(
                     &project_path,
                     &ghidra_install_dir,
-                    BridgeStartMode::Process { program_name: program },
+                    BridgeStartMode::Process {
+                        program_name: program,
+                    },
                 )?;
                 if !cli.quiet {
                     eprintln!("Bridge ready.");
@@ -673,7 +675,9 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
                     let port = bridge::ensure_bridge_running(
                         &project_path,
                         &ghidra_install_dir,
-                        BridgeStartMode::Process { program_name: program },
+                        BridgeStartMode::Process {
+                            program_name: program,
+                        },
                     )?;
                     let retry_client = BridgeClient::new(port);
 
@@ -914,9 +918,10 @@ fn execute_via_bridge(
             match cmd {
                 XRefCommands::To(args) => client.xrefs_to(args.resolved_target().to_string()),
                 XRefCommands::From(args) => client.xrefs_from(args.resolved_target().to_string()),
-                XRefCommands::List(args) => {
-                    client.send_command("xrefs_list", Some(json!({"address": args.resolved_target()})))
-                }
+                XRefCommands::List(args) => client.send_command(
+                    "xrefs_list",
+                    Some(json!({"address": args.resolved_target()})),
+                ),
             }
         }
         Commands::Program(cmd) => {
@@ -966,10 +971,9 @@ fn execute_via_bridge(
                 TypeCommands::Get(args) => client.type_get(&args.name),
                 TypeCommands::Create(args) => client.type_create(&args.definition),
                 TypeCommands::Apply(args) => client.type_apply(&args.address, &args.type_name),
-                TypeCommands::Delete(args) => client.send_command(
-                    "type_delete",
-                    Some(json!({"name": args.name})),
-                ),
+                TypeCommands::Delete(args) => {
+                    client.send_command("type_delete", Some(json!({"name": args.name})))
+                }
                 TypeCommands::Rename(args) => client.send_command(
                     "type_rename",
                     Some(json!({"old_name": args.old_name, "new_name": args.new_name})),
@@ -1129,9 +1133,12 @@ fn execute_via_bridge(
                 BookmarkCommands::List(args) => {
                     client.bookmark_list(args.bookmark_type.as_deref(), args.limit)
                 }
-                BookmarkCommands::Add(args) => {
-                    client.bookmark_add(&args.address, Some(args.bookmark_type.as_str()), args.category.as_deref(), args.comment.as_deref())
-                }
+                BookmarkCommands::Add(args) => client.bookmark_add(
+                    &args.address,
+                    Some(args.bookmark_type.as_str()),
+                    args.category.as_deref(),
+                    args.comment.as_deref(),
+                ),
                 BookmarkCommands::Delete(args) => {
                     client.bookmark_delete(&args.address, args.bookmark_type.as_deref())
                 }
@@ -1183,7 +1190,9 @@ fn handle_bridge_start(project: Option<String>, program: Option<String>) -> anyh
 
     // Determine start mode
     let program = resolve_program_for_bridge(program, &project_path)?;
-    let mode = BridgeStartMode::Process { program_name: program };
+    let mode = BridgeStartMode::Process {
+        program_name: program,
+    };
 
     println!("Starting bridge for project: {}", project_path.display());
 

@@ -165,10 +165,8 @@ fn evaluate_in(field: &str, values: &[Value], data: &JsonValue) -> Result<bool> 
 
     for val in values {
         match (field_value, val) {
-            (JsonValue::String(s), Value::String(v)) => {
-                if s.eq_ignore_ascii_case(v) {
-                    return Ok(true);
-                }
+            (JsonValue::String(s), Value::String(v)) if s.eq_ignore_ascii_case(v) => {
+                return Ok(true);
             }
             (JsonValue::Number(n), v) => {
                 if let Some(compare_num) = v.as_f64() {
@@ -177,10 +175,8 @@ fn evaluate_in(field: &str, values: &[Value], data: &JsonValue) -> Result<bool> 
                     }
                 }
             }
-            (JsonValue::Bool(b), Value::Boolean(v)) => {
-                if *b == *v {
-                    return Ok(true);
-                }
+            (JsonValue::Bool(b), Value::Boolean(v)) if *b == *v => {
+                return Ok(true);
             }
             _ => {}
         }
