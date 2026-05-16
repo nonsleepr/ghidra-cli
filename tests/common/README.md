@@ -92,7 +92,7 @@ fn test_something() {
 }
 ```
 
-Runs `ghidra doctor` and fails the test if Ghidra is unavailable, including doctor output.
+Runs `ghidra doctor` and panics (fails the test) if Ghidra is unavailable, including doctor output.
 
 ## GhidraCommand Builder (helpers.rs)
 
@@ -109,14 +109,15 @@ let result = ghidra(&harness)
 result.assert_success();
 ```
 
-The `ghidra(&harness)` helper pre-configures `--project` args from the harness. Additional helpers include `with_project()`, `json_format()`, and `timeout()`.
+The `ghidra(&harness)` helper pre-configures `--project` args from the harness.
 
 ## Design Decisions
 
-### Exponential Backoff Parameters
+### Bridge Startup: Port File Wait
 
-`wait_for_port()` uses backoff to wait for the bridge port file to appear after launching `analyzeHeadless`. Typical fast start exits in <5s.
+`wait_for_port()` polls for the bridge port file to appear after launching `analyzeHeadless`. Typical fast start exits in <5s.
 
 ### Why 5s Shutdown Timeout
 
 Most bridges shut down in <1s. 5s allows graceful cleanup without blocking tests indefinitely. If bridge hangs, hard kill via PID prevents test suite deadlock.
+
