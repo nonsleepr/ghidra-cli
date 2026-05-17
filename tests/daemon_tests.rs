@@ -172,7 +172,7 @@ fn test_daemon_restart() {
     // Use run_cli_with_timeout to avoid Windows pipe handle inheritance.
     // `ghidra restart` stops the old bridge and starts a new JVM. With piped
     // stdout/stderr, the new JVM inherits pipe handles, blocking forever.
-    let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra");
+    let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra-cli");
     let status = common::run_cli_with_timeout(
         ghidra_bin,
         &[

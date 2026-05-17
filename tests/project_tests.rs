@@ -113,7 +113,7 @@ fn test_import_binary() {
 
     // Use run_cli_with_timeout to avoid Windows pipe handle inheritance.
     // `ghidra import` spawns a JVM whose inherited pipe handles block output() forever.
-    let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra");
+    let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra-cli");
     let status = common::run_cli_with_timeout(
         ghidra_bin,
         &[
@@ -145,7 +145,7 @@ fn test_analyze_program() {
     let project = unique_project_name("analyze");
     let binary = common::fixture_binary();
 
-    let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra");
+    let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra-cli");
     let status = common::run_cli_with_timeout(
         ghidra_bin,
         &[
@@ -207,7 +207,7 @@ fn test_import_existing_program() {
     let binary = common::fixture_binary();
 
     // Use run_cli_with_timeout to avoid Windows pipe handle inheritance.
-    let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra");
+    let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra-cli");
     let status = common::run_cli_with_timeout(
         ghidra_bin,
         &[

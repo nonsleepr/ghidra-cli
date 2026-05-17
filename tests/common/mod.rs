@@ -101,7 +101,7 @@ pub fn ensure_test_project(project: &str, program: &str) {
         // When ghidra.exe exits, the pipe stays open (JVM holds inherited handles),
         // so output()/wait_with_output() blocks forever. Using null avoids this.
         eprintln!("Step 1: Importing binary {:?} ...", binary);
-        let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra");
+        let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra-cli");
         let import_status = run_cli_with_timeout(
             ghidra_bin,
             &[
