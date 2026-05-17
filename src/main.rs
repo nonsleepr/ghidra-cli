@@ -715,9 +715,7 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
         .as_ref()
         .and_then(|o| o.format.as_ref())
         .map(|f| OutputFormat::from_str(f))
-        .transpose()
-        .ok()
-        .flatten();
+        .transpose()?;
 
     let format = if let Some(fmt) = explicit_format {
         fmt
@@ -1465,7 +1463,6 @@ fn handle_config_command(cmd: cli::ConfigCommands) -> anyhow::Result<()> {
         ConfigCommands::Set { key, value } => {
             let mut config = Config::load()?;
             match key.as_str() {
-                "default_output_format" => config.default_output_format = Some(value),
                 "timeout" => {
                     let timeout: u64 = value.parse().map_err(|_| {
                         GhidraError::ConfigError("Invalid timeout value".to_string())

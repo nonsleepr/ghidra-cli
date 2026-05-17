@@ -8,10 +8,8 @@ pub struct Config {
     pub ghidra_install_dir: Option<PathBuf>,
     pub ghidra_project_dir: Option<PathBuf>,
     pub default_project: Option<String>,
-    pub default_output_format: Option<String>,
     pub default_limit: Option<usize>,
     pub timeout: Option<u64>,
-    pub aliases: std::collections::HashMap<String, String>,
 }
 
 impl Default for Config {
@@ -20,10 +18,8 @@ impl Default for Config {
             ghidra_install_dir: None,
             ghidra_project_dir: None,
             default_project: None,
-            default_output_format: Some("auto".to_string()),
             default_limit: Some(1000),
             timeout: Some(300),
-            aliases: std::collections::HashMap::new(),
         }
     }
 }

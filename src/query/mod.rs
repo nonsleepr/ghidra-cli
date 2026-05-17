@@ -1,59 +1,10 @@
 use crate::cli::QueryOptions;
-use crate::error::{GhidraError, Result};
+use crate::error::Result;
 use crate::filter::Filter;
 use crate::format::{DefaultFormatter, Formatter, OutputFormat};
 use serde_json::Value as JsonValue;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum DataType {
-    Functions,
-    Strings,
-    Symbols,
-    Imports,
-    Exports,
-    XRefs,
-    Memory,
-    Sections,
-    Comments,
-    Types,
-    Instructions,
-    BasicBlocks,
-    CallGraph,
-    Data,
-    References,
-}
-
-#[allow(dead_code)]
-impl DataType {
-    pub fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
-            "functions" | "function" | "fn" => Ok(Self::Functions),
-            "strings" | "string" | "str" => Ok(Self::Strings),
-            "symbols" | "symbol" | "sym" => Ok(Self::Symbols),
-            "imports" | "import" => Ok(Self::Imports),
-            "exports" | "export" => Ok(Self::Exports),
-            "xrefs" | "xref" | "crossrefs" => Ok(Self::XRefs),
-            "memory" | "mem" => Ok(Self::Memory),
-            "sections" | "section" => Ok(Self::Sections),
-            "comments" | "comment" => Ok(Self::Comments),
-            "types" | "type" => Ok(Self::Types),
-            "instructions" | "instruction" | "insn" => Ok(Self::Instructions),
-            "basicblocks" | "basic-blocks" | "blocks" => Ok(Self::BasicBlocks),
-            "callgraph" | "call-graph" => Ok(Self::CallGraph),
-            "data" => Ok(Self::Data),
-            "references" | "refs" => Ok(Self::References),
-            _ => Err(GhidraError::InvalidDataType(format!(
-                "Unknown data type: {}",
-                s
-            ))),
-        }
-    }
-}
-
 pub struct Query {
-    #[allow(dead_code)]
-    pub data_type: DataType,
     pub filter: Option<Filter>,
     pub fields: Option<FieldSelector>,
     pub format: OutputFormat,
@@ -64,20 +15,6 @@ pub struct Query {
 }
 
 impl Query {
-    #[allow(dead_code)]
-    pub fn new(data_type: DataType) -> Self {
-        Self {
-            data_type,
-            filter: None,
-            fields: None,
-            format: OutputFormat::Json,
-            limit: None,
-            offset: None,
-            sort: None,
-            count_only: false,
-        }
-    }
-
     /// Build a Query from CLI QueryOptions. Returns None if no query processing is needed.
     pub fn from_options(opts: &QueryOptions, format: OutputFormat) -> Result<Option<Self>> {
         let has_filter = opts.filter.is_some();
@@ -99,7 +36,6 @@ impl Query {
         let sort = opts.sort.as_ref().map(|s| SortKey::parse(s));
 
         Ok(Some(Self {
-            data_type: DataType::Functions, // placeholder, not used in process_results
             filter,
             fields,
             format,
@@ -344,16 +280,6 @@ impl SortKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_data_type_parsing() {
-        assert_eq!(
-            DataType::from_str("functions").unwrap(),
-            DataType::Functions
-        );
-        assert_eq!(DataType::from_str("fn").unwrap(), DataType::Functions);
-        assert_eq!(DataType::from_str("strings").unwrap(), DataType::Strings);
-    }
 
     #[test]
     fn test_field_selector_parse() {

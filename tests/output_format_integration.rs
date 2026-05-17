@@ -1,21 +1,7 @@
 //! Integration tests for output format flags
 
-/// Helper to verify Ghidra is installed before running tests
-fn require_ghidra() {
-    let output = assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
-        .arg("doctor")
-        .output()
-        .expect("Failed to run ghidra doctor");
-
-    if !output.status.success() {
-        panic!("Ghidra is not installed. Tests require Ghidra installation per AGENTS.md");
-    }
-}
-
 #[test]
 fn test_help_shows_json_flag() {
-    require_ghidra();
-
     let output = assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("--help")
         .output()
@@ -30,8 +16,6 @@ fn test_help_shows_json_flag() {
 
 #[test]
 fn test_json_flag_accepted() {
-    require_ghidra();
-
     assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("--json")
         .arg("--help")
@@ -41,9 +25,7 @@ fn test_json_flag_accepted() {
 
 #[test]
 fn test_format_flag_accepted() {
-    require_ghidra();
-
-    // Valid formats should be accepted
+    // Valid formats should be accepted (version command doesn't need Ghidra)
     for fmt in &["compact", "json", "count"] {
         assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
             .arg("version")
@@ -52,4 +34,15 @@ fn test_format_flag_accepted() {
             .assert()
             .success();
     }
+}
+
+#[test]
+fn test_invalid_format_rejected() {
+    // Invalid format should be an error, not silently fall back
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
+        .arg("version")
+        .arg("-o")
+        .arg("invalid_format")
+        .assert()
+        .failure();
 }
