@@ -74,9 +74,34 @@ impl GhidraResult {
         self
     }
 
-    /// Parse stdout as JSON into the specified type.
+    /// Parse stdout as JSON or JSONL into the specified type.
+    ///
+    /// Handles both a single JSON value and JSONL (one object per line).
+    /// When the output is JSONL and T is Vec<U>, each line is parsed as U
+    /// and collected into a Vec. Falls back to raw JSON array parsing first.
     /// Panics with helpful message if parsing fails.
     pub fn json<T: DeserializeOwned>(&self) -> T {
+        // First try direct JSON parse (handles single objects, arrays, etc.)
+        if let Ok(v) = serde_json::from_str::<T>(&self.stdout) {
+            return v;
+        }
+        // Try JSONL: collect lines into a JSON array and re-parse
+        let trimmed = self.stdout.trim();
+        if trimmed.contains('\n') || (!trimmed.starts_with('[') && !trimmed.is_empty()) {
+            let items: Vec<serde_json::Value> = trimmed
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| serde_json::from_str(l))
+                .collect::<Result<_, _>>()
+                .unwrap_or_default();
+            if !items.is_empty() {
+                let arr = serde_json::Value::Array(items);
+                if let Ok(v) = serde_json::from_value::<T>(arr) {
+                    return v;
+                }
+            }
+        }
+        // Final attempt with original error message
         serde_json::from_str(&self.stdout).unwrap_or_else(|e| {
             panic!(
                 "Failed to parse stdout as JSON.\nError: {}\nstdout:\n{}",
@@ -92,9 +117,23 @@ impl GhidraResult {
         result
     }
 
-    /// Try to parse stdout as JSON, returning None if it fails.
+    /// Try to parse stdout as JSON or JSONL, returning None if it fails.
     pub fn try_json<T: DeserializeOwned>(&self) -> Option<T> {
-        serde_json::from_str(&self.stdout).ok()
+        if let Ok(v) = serde_json::from_str::<T>(&self.stdout) {
+            return Some(v);
+        }
+        // Try JSONL fallback
+        let trimmed = self.stdout.trim();
+        let items: Vec<serde_json::Value> = trimmed
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l))
+            .collect::<Result<_, _>>()
+            .ok()?;
+        if items.is_empty() {
+            return None;
+        }
+        serde_json::from_value::<T>(serde_json::Value::Array(items)).ok()
     }
 
     /// Get stdout lines as a vector.
@@ -187,7 +226,7 @@ impl GhidraCommand {
 
     /// Request JSON output format.
     pub fn json_format(self) -> Self {
-        self.arg("--format").arg("json")
+        self.arg("--json")
     }
 
     /// Set timeout in seconds.

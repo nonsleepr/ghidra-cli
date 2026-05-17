@@ -12,6 +12,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Ghidra 12 rejects path components starting with '.'.
+  # On Linux the default cache dir (~/.cache) is rejected; use a clean path.
+  GHIDRA_PROJECT_DIR: ${{ github.workspace }}/ghidra-projects
 
 jobs:
   # Job 1: Unit tests and CLI tests (no Ghidra needed) - ~2 min
@@ -86,11 +89,8 @@ jobs:
         id: project-cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/ghidra-cli/projects
-            ~/Library/Caches/ghidra-cli/projects
-            ~/AppData/Local/ghidra-cli/projects
-          key: ghidra-projects-${{ matrix.os }}-v4-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          path: ${{ github.workspace }}/ghidra-projects
+          key: ghidra-projects-${{ matrix.os }}-v5-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -160,11 +160,8 @@ jobs:
       - name: Restore Ghidra projects
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/ghidra-cli/projects
-            ~/Library/Caches/ghidra-cli/projects
-            ~/AppData/Local/ghidra-cli/projects
-          key: ghidra-projects-${{ matrix.os }}-v4-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          path: ${{ github.workspace }}/ghidra-projects
+          key: ghidra-projects-${{ matrix.os }}-v5-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -233,11 +230,8 @@ jobs:
       - name: Restore Ghidra projects
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/ghidra-cli/projects
-            ~/Library/Caches/ghidra-cli/projects
-            ~/AppData/Local/ghidra-cli/projects
-          key: ghidra-projects-${{ matrix.os }}-v4-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          path: ${{ github.workspace }}/ghidra-projects
+          key: ghidra-projects-${{ matrix.os }}-v5-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -306,11 +300,8 @@ jobs:
       - name: Restore Ghidra projects
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/ghidra-cli/projects
-            ~/Library/Caches/ghidra-cli/projects
-            ~/AppData/Local/ghidra-cli/projects
-          key: ghidra-projects-${{ matrix.os }}-v4-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          path: ${{ github.workspace }}/ghidra-projects
+          key: ghidra-projects-${{ matrix.os }}-v5-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose

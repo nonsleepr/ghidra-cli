@@ -62,8 +62,8 @@ fn test_config_set() {
         .env("GHIDRA_CLI_CONFIG", &config_path)
         .arg("config")
         .arg("set")
-        .arg("default_output_format")
-        .arg("json")
+        .arg("default_limit")
+        .arg("500")
         .assert()
         .success();
 }
