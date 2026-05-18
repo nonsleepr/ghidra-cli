@@ -1647,6 +1647,13 @@ fn unwrap_bridge_response(value: serde_json::Value) -> Vec<serde_json::Value> {
         return vec![value];
     }
 
+    // Special case: stats response wraps data under a "stats" key - unwrap it
+    if obj.len() == 1 || (obj.len() == 2 && obj.contains_key("message")) {
+        if let Some(inner @ serde_json::Value::Object(_)) = obj.get("stats") {
+            return vec![inner.clone()];
+        }
+    }
+
     // Look for a known array key
     for &key in ARRAY_KEYS {
         if let Some(serde_json::Value::Array(arr)) = obj.get(key) {

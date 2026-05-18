@@ -85,20 +85,44 @@ impl GhidraResult {
         if let Ok(v) = serde_json::from_str::<T>(&self.stdout) {
             return v;
         }
-        // Try JSONL: collect lines into a JSON array and re-parse
+        // Try JSONL: collect non-empty lines into a JSON array and re-parse.
+        // This handles the common case where CLI emits one object per line.
         let trimmed = self.stdout.trim();
-        if trimmed.contains('\n') || (!trimmed.starts_with('[') && !trimmed.is_empty()) {
-            let items: Vec<serde_json::Value> = trimmed
-                .lines()
-                .filter(|l| !l.trim().is_empty())
+        let lines: Vec<&str> = trimmed
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
+        if !lines.is_empty() {
+            let items: Vec<serde_json::Value> = lines
+                .iter()
                 .map(|l| serde_json::from_str(l))
                 .collect::<Result<_, _>>()
                 .unwrap_or_default();
             if !items.is_empty() {
+                // If exactly one item, try deserializing it directly as T first.
+                // This handles single-object JSONL (e.g. `stats` output).
+                if items.len() == 1 {
+                    if let Ok(v) = serde_json::from_value::<T>(items[0].clone()) {
+                        return v;
+                    }
+                }
+                // Try as array (handles Vec<T> callers).
                 let arr = serde_json::Value::Array(items);
                 if let Ok(v) = serde_json::from_value::<T>(arr) {
                     return v;
                 }
+            }
+            // Empty result set: try empty array (handles Vec<T> callers).
+            if lines.is_empty() || items.is_empty() {
+                if let Ok(v) = serde_json::from_value::<T>(serde_json::Value::Array(vec![])) {
+                    return v;
+                }
+            }
+        } else {
+            // Empty stdout: try empty array for Vec<T> callers.
+            if let Ok(v) = serde_json::from_value::<T>(serde_json::Value::Array(vec![])) {
+                return v;
             }
         }
         // Final attempt with original error message
@@ -126,12 +150,19 @@ impl GhidraResult {
         let trimmed = self.stdout.trim();
         let items: Vec<serde_json::Value> = trimmed
             .lines()
-            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
             .map(|l| serde_json::from_str(l))
             .collect::<Result<_, _>>()
             .ok()?;
         if items.is_empty() {
-            return None;
+            return serde_json::from_value::<T>(serde_json::Value::Array(vec![])).ok();
+        }
+        // Try single item directly first, then as array
+        if items.len() == 1 {
+            if let Ok(v) = serde_json::from_value::<T>(items[0].clone()) {
+                return Some(v);
+            }
         }
         serde_json::from_value::<T>(serde_json::Value::Array(items)).ok()
     }
