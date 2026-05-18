@@ -93,13 +93,23 @@ impl GhidraResult {
             .map(|l| l.trim())
             .filter(|l| !l.is_empty())
             .collect();
-        if !lines.is_empty() {
+        // Empty stdout or no parseable lines: try empty array for Vec<T> callers.
+        if lines.is_empty() {
+            if let Ok(v) = serde_json::from_value::<T>(serde_json::Value::Array(vec![])) {
+                return v;
+            }
+        } else {
             let items: Vec<serde_json::Value> = lines
                 .iter()
                 .map(|l| serde_json::from_str(l))
                 .collect::<Result<_, _>>()
                 .unwrap_or_default();
-            if !items.is_empty() {
+            if items.is_empty() {
+                // Lines present but none parsed as JSON: try empty array.
+                if let Ok(v) = serde_json::from_value::<T>(serde_json::Value::Array(vec![])) {
+                    return v;
+                }
+            } else {
                 // If exactly one item, try deserializing it directly as T first.
                 // This handles single-object JSONL (e.g. `stats` output).
                 if items.len() == 1 {
@@ -112,17 +122,6 @@ impl GhidraResult {
                 if let Ok(v) = serde_json::from_value::<T>(arr) {
                     return v;
                 }
-            }
-            // Empty result set: try empty array (handles Vec<T> callers).
-            if lines.is_empty() || items.is_empty() {
-                if let Ok(v) = serde_json::from_value::<T>(serde_json::Value::Array(vec![])) {
-                    return v;
-                }
-            }
-        } else {
-            // Empty stdout: try empty array for Vec<T> callers.
-            if let Ok(v) = serde_json::from_value::<T>(serde_json::Value::Array(vec![])) {
-                return v;
             }
         }
         // Final attempt with original error message
