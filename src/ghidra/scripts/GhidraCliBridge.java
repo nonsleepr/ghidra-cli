@@ -853,7 +853,8 @@ public class GhidraCliBridge extends GhidraScript {
 
                 return result;
             } else {
-                return errorResult("Decompilation failed");
+                String msg = results.getErrorMessage();
+                return errorResult("Decompilation failed" + (msg != null && !msg.isEmpty() ? ": " + msg : ""));
             }
         } finally {
             decompiler.dispose();
@@ -2749,8 +2750,10 @@ public class GhidraCliBridge extends GhidraScript {
                 decompiler.openProgram(currentProgram);
                 TaskMonitor mon = new ConsoleTaskMonitor();
                 DecompileResults results = decompiler.decompileFunction(func, 30, mon);
-                if (!results.decompileCompleted())
-                    return errorResult("Decompilation failed for " + funcTarget);
+                if (!results.decompileCompleted()) {
+                    String msg = results.getErrorMessage();
+                    return errorResult("Decompilation failed for " + funcTarget + (msg != null && !msg.isEmpty() ? ": " + msg : ""));
+                }
 
                 ghidra.program.model.pcode.HighFunction highFunc = results.getHighFunction();
                 if (highFunc == null)
@@ -2851,7 +2854,8 @@ public class GhidraCliBridge extends GhidraScript {
                     decomp.openProgram(currentProgram);
                     DecompileResults results = decomp.decompileFunction(func, 30, new ConsoleTaskMonitor());
                     if (!results.decompileCompleted()) {
-                        return errorResult("Decompilation failed for " + func.getName());
+                        String msg = results.getErrorMessage();
+                        return errorResult("Decompilation failed for " + func.getName() + (msg != null && !msg.isEmpty() ? ": " + msg : ""));
                     }
 
                     HighFunction hf = results.getHighFunction();
@@ -3650,8 +3654,14 @@ public class GhidraCliBridge extends GhidraScript {
                 DecompileResults res1 = decompiler.decompileFunction(func1, 30, mon);
                 DecompileResults res2 = decompiler.decompileFunction(func2, 30, mon);
 
-                if (!res1.decompileCompleted()) return errorResult("Failed to decompile " + func1Target);
-                if (!res2.decompileCompleted()) return errorResult("Failed to decompile " + func2Target);
+                if (!res1.decompileCompleted()) {
+                    String msg = res1.getErrorMessage();
+                    return errorResult("Failed to decompile " + func1Target + (msg != null && !msg.isEmpty() ? ": " + msg : ""));
+                }
+                if (!res2.decompileCompleted()) {
+                    String msg = res2.getErrorMessage();
+                    return errorResult("Failed to decompile " + func2Target + (msg != null && !msg.isEmpty() ? ": " + msg : ""));
+                }
 
                 String code1 = res1.getDecompiledFunction().getC();
                 String code2 = res2.getDecompiledFunction().getC();
