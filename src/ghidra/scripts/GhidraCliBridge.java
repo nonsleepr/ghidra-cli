@@ -853,12 +853,21 @@ public class GhidraCliBridge extends GhidraScript {
 
                 return result;
             } else {
-                String msg = results.getErrorMessage();
-                return errorResult("Decompilation failed" + (msg != null && !msg.isEmpty() ? ": " + msg : ""));
+                return errorResult("Decompilation failed: " + decompileFailureReason(results));
             }
         } finally {
             decompiler.dispose();
         }
+    }
+
+    /** Build a human-readable failure reason from DecompileResults. */
+    private static String decompileFailureReason(DecompileResults r) {
+        if (r.failedToStart()) return "decompiler process failed to start";
+        if (r.isTimedOut())    return "decompiler timed out";
+        if (r.isCancelled())   return "decompilation cancelled";
+        String msg = r.getErrorMessage();
+        if (msg != null && !msg.isEmpty()) return msg;
+        return "unknown failure";
     }
 
     private JsonObject handleListStrings(JsonObject args) {
@@ -2751,8 +2760,7 @@ public class GhidraCliBridge extends GhidraScript {
                 TaskMonitor mon = new ConsoleTaskMonitor();
                 DecompileResults results = decompiler.decompileFunction(func, 30, mon);
                 if (!results.decompileCompleted()) {
-                    String msg = results.getErrorMessage();
-                    return errorResult("Decompilation failed for " + funcTarget + (msg != null && !msg.isEmpty() ? ": " + msg : ""));
+                    return errorResult("Decompilation failed for " + funcTarget + ": " + decompileFailureReason(results));
                 }
 
                 ghidra.program.model.pcode.HighFunction highFunc = results.getHighFunction();
@@ -2854,8 +2862,7 @@ public class GhidraCliBridge extends GhidraScript {
                     decomp.openProgram(currentProgram);
                     DecompileResults results = decomp.decompileFunction(func, 30, new ConsoleTaskMonitor());
                     if (!results.decompileCompleted()) {
-                        String msg = results.getErrorMessage();
-                        return errorResult("Decompilation failed for " + func.getName() + (msg != null && !msg.isEmpty() ? ": " + msg : ""));
+                        return errorResult("Decompilation failed for " + func.getName() + ": " + decompileFailureReason(results));
                     }
 
                     HighFunction hf = results.getHighFunction();
@@ -3655,12 +3662,10 @@ public class GhidraCliBridge extends GhidraScript {
                 DecompileResults res2 = decompiler.decompileFunction(func2, 30, mon);
 
                 if (!res1.decompileCompleted()) {
-                    String msg = res1.getErrorMessage();
-                    return errorResult("Failed to decompile " + func1Target + (msg != null && !msg.isEmpty() ? ": " + msg : ""));
+                    return errorResult("Failed to decompile " + func1Target + ": " + decompileFailureReason(res1));
                 }
                 if (!res2.decompileCompleted()) {
-                    String msg = res2.getErrorMessage();
-                    return errorResult("Failed to decompile " + func2Target + (msg != null && !msg.isEmpty() ? ": " + msg : ""));
+                    return errorResult("Failed to decompile " + func2Target + ": " + decompileFailureReason(res2));
                 }
 
                 String code1 = res1.getDecompiledFunction().getC();
