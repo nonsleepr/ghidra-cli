@@ -1,0 +1,706 @@
+.TH GHIDRA\-CLI 1 "2026-05-18" "ghidra-cli 0.1.10" "User Commands"
+.SH NAME
+ghidra\-cli \- Rust CLI for automating Ghidra reverse engineering tasks
+.SH SYNOPSIS
+.B ghidra\-cli
+[\fIOPTIONS\fR]
+.I COMMAND
+[\fIARGS\fR...]
+.SH DESCRIPTION
+.B ghidra\-cli
+drives Ghidra's headless analyzer through a long-lived TCP bridge process,
+exposing binary analysis, decompilation, patching, and type annotation as
+composable shell commands.
+.PP
+.B Architecture.
+Each invocation connects to (or starts) a per-project bridge:
+.PP
+.RS
+.EX
+ghidra\-cli (Rust/clap)
+    |  TCP JSON-RPC (localhost, dynamic port)
+    v
+GhidraCliBridge.java  (GhidraScript inside analyzeHeadless JVM)
+    |
+    v
+Ghidra project  (~/.local/share/ghidra-projects/ by default)
+.EE
+.RE
+.PP
+There is no separate daemon.  The Java bridge IS the persistent server;
+it auto-starts on first use and is keyed by an MD5 of the project path.
+Commands are processed sequentially (Ghidra's Program API is not thread-safe).
+.PP
+.B Output.
+When stdout is a TTY the default format is human-readable compact text.
+When stdout is a pipe the default is JSONL (one JSON object per line).
+Use
+.B \-\-json
+or
+.B \-o json
+to force JSONL regardless of TTY state.
+.SH COMMANDS
+.SS "Setup and health"
+.TP
+.B setup
+Download and install Ghidra automatically.
+.TP
+.B doctor
+Check Ghidra installation, Java, project directory, and config.
+.TP
+.B init
+Interactively initialize configuration.
+.SS "Bridge lifecycle"
+.TP
+.B start
+Start the bridge for a project without running a command.
+.TP
+.B stop
+Stop the running bridge for a project.
+.TP
+.B restart
+Restart the bridge (stop then start).
+.TP
+.B status
+Show bridge status (running/stopped, port, PID).
+.TP
+.B ping
+Verify the bridge responds.
+.SS "Project management"
+.TP
+.B project create \fINAME\fR
+Create a new Ghidra project.
+.TP
+.B project list
+List all projects in
+.IR GHIDRA_PROJECT_DIR .
+.TP
+.B project delete \fINAME\fR
+Delete a project.
+.TP
+.B project info [\fINAME\fR]
+Show project metadata.
+.SS "Binary import and analysis"
+.TP
+.B import \fIBINARY\fR [\fB\-\-project\fR \fIPROJ\fR] [\fB\-\-program\fR \fINAME\fR] [\fB\-\-detach\fR]
+Import a binary into a project and run auto-analysis.
+.TP
+.B analyze [\fB\-\-project\fR \fIPROJ\fR] [\fB\-\-program\fR \fINAME\fR] [\fB\-\-detach\fR]
+Re-run analysis on an already-imported program.
+.SS "Program management"
+.TP
+.B program list
+List all programs in the project.
+.TP
+.B program open [\fB\-\-program\fR \fINAME\fR]
+Switch the bridge's active program.
+.TP
+.B program close
+Release the active program from the bridge (without deleting it).
+.TP
+.B program delete [\fB\-\-program\fR \fINAME\fR]
+Delete a program from the project.
+.TP
+.B program info
+Show metadata for the active program.
+.TP
+.B program export \fIFORMAT\fR [\fB\-o\fR \fIFILE\fR]
+Export the program.
+.I FORMAT
+is one of
+.BR xml ", " json ", " asm ", " c .
+.SS "Inspection"
+.TP
+.B summary
+High-level overview: format, architecture, compiler, section count, symbol count.
+.TP
+.B stats
+Numeric statistics: function count, string count, import/export counts, instruction count.
+.TP
+.B function list [\fIOPTIONS\fR]
+List all functions.  Supports
+.BR \-\-filter ", " \-\-fields ", " \-\-limit ", " \-\-sort .
+.TP
+.B function get \fITARGET\fR
+Show details for one function.
+.I TARGET
+is a name, hex address (\fB0x401000\fR), or auto-name (\fBFUN_00401000\fR).
+.TP
+.B function calls \fITARGET\fR
+List outgoing calls from a function.
+.TP
+.B function xrefs \fITARGET\fR
+List cross-references to a function.
+.TP
+.B decompile \fITARGET\fR [\fB\-\-with\-vars\fR] [\fB\-\-with\-params\fR]
+Decompile a function to C pseudocode.
+.B \-\-with\-vars
+adds local variable details (name, type, storage).
+.B \-\-with\-params
+adds parameter details.
+.TP
+.B disasm \fITARGET\fR [\fB\-n\fR \fIN\fR]
+Disassemble a function or
+.I N
+instructions starting at an address.
+.TP
+.B strings list [\fIOPTIONS\fR]
+List defined strings.
+.TP
+.B strings refs \fISTRING\fR
+Find cross-references to a string.
+.TP
+.B symbol list [\fIOPTIONS\fR]
+List symbols.
+.TP
+.B symbol get \fINAME\fR
+.TP
+.B symbol create \fIADDR\fR \fINAME\fR
+.TP
+.B symbol delete \fINAME\fR
+.TP
+.B symbol rename \fIOLD\fR \fINEW\fR
+.TP
+.B memory map
+Show memory segments/sections.
+.TP
+.B memory read \fIADDR\fR \fISIZE\fR
+Read bytes at address.
+.TP
+.B memory search \fIPATTERN\fR
+Search for byte pattern in memory.
+.TP
+.B x\-ref to \fITARGET\fR
+Cross-references pointing to address/symbol.
+.TP
+.B x\-ref from \fITARGET\fR
+Cross-references originating from address/symbol.
+.TP
+.B x\-ref list \fITARGET\fR
+All cross-references for target.
+.B Note:
+the optional TARGET argument is currently ignored at runtime; all xrefs are listed.
+.TP
+.B graph calls
+Full call graph of the program.
+.TP
+.B graph callers \fITARGET\fR [\fB\-\-depth\fR \fIN\fR]
+Functions that call TARGET (callers, i.e. incoming edges).
+.TP
+.B graph callees \fITARGET\fR [\fB\-\-depth\fR \fIN\fR]
+Functions called by TARGET (callees, i.e. outgoing edges).
+.TP
+.B graph export \fIFORMAT\fR
+Export the call graph.
+.I FORMAT
+is
+.B dot
+or
+.BR json .
+.TP
+.B pcode at \fIADDR\fR
+Raw PCode at an address.
+.TP
+.B pcode function \fIFUNC\fR [\fB\-\-high\fR]
+PCode for a whole function.
+.B \-\-high
+uses decompiler high-PCode instead of raw listing PCode.
+.TP
+.B dump imports|exports|functions|strings
+Bulk export of a data category.
+.TP
+.B find string \fIPATTERN\fR
+Search for strings matching a substring or pattern.
+.TP
+.B find bytes \fIHEX\fR
+Search for a hex byte pattern, e.g.\&
+.BR 4883ec08 .
+.TP
+.B find function \fIPATTERN\fR
+Find functions whose name matches a glob pattern.
+.TP
+.B find calls \fITARGET\fR
+Find all call sites that call TARGET.
+.TP
+.B find crypto
+Identify crypto constants (S-boxes, magic numbers).
+.TP
+.B find interesting
+List functions with notable properties (large, many xrefs, etc.).
+.TP
+.B diff functions \fIFUNC1\fR \fIFUNC2\fR
+Compare decompiled output of two functions.
+.TP
+.B diff programs \fIPROG1\fR \fIPROG2\fR
+Compare two programs in the project.
+.TP
+.B query \fITYPE\fR [\fIOPTIONS\fR]
+Universal query interface.
+.I TYPE
+is any data category (functions, strings, imports, symbols, etc.).
+.SS "Annotation"
+.TP
+.B comment list
+List all user-set comments in the program.
+Note: no default limit is applied; all comments are returned.
+.TP
+.B comment get \fIADDR\fR
+Get comment at address.
+.TP
+.B comment set \fIADDR\fR \fITEXT\fR [\fB\-\-comment\-type\fR \fITYPE\fR]
+Set a comment.
+.I TYPE
+is one of
+.BR EOL ", " PRE ", " POST ", " PLATE ", " REPEATABLE .
+Defaults to
+.BR EOL .
+.TP
+.B comment delete \fIADDR\fR
+Delete comment.
+.TP
+.B function rename \fIOLD\fR \fINEW\fR
+Rename a function (alias:
+.BR rename " / " mv ).
+.TP
+.B function set\-signature \fITARGET\fR \fB\-\-signature\fR \fISTRING\fR
+Set function signature from a C-style string, e.g.\&
+.BR "int parse(char *buf, int len)" .
+.TP
+.B function set\-return\-type \fITARGET\fR \fB\-\-type\fR \fITYPE\fR
+Set function return type.
+.TP
+.B function set\-calling\-convention \fITARGET\fR \fB\-\-convention\fR \fINAME\fR
+Set calling convention (e.g.,
+.BR __cdecl ", " __stdcall ", " __fastcall ).
+.TP
+.B function set\-var\-type \fITARGET\fR \fB\-\-var\fR \fINAME\fR \fB\-\-type\fR \fITYPE\fR
+Retype a local variable in a decompiled function.
+.TP
+.B type list
+List all data types in the type manager.
+.TP
+.B type get \fINAME\fR
+Show definition of a data type.
+.TP
+.B type create \fIDEFINITION\fR
+Create a struct or other type from a C-style definition string.
+.TP
+.B type create\-enum \fINAME\fR \fB\-\-values\fR \fIK=V,...\fR [\fB\-\-size\fR \fIN\fR]
+Create an enum type.
+.B \-\-size
+is in bytes (1, 2, 4, or 8; default 4).
+.TP
+.B type typedef \fINAME\fR \fIBASE_TYPE\fR
+Create a typedef alias.
+.TP
+.B type add\-field \fISTRUCT\fR \fB\-\-name\fR \fINAME\fR \fB\-\-type\fR \fITYPE\fR [\fB\-\-offset\fR \fIN\fR]
+Add a field to a struct (appends if
+.B \-\-offset
+is omitted).
+.TP
+.B type del\-field \fISTRUCT\fR \fB\-\-name\fR \fINAME\fR
+Remove a field from a struct.
+.TP
+.B type delete \fINAME\fR
+Delete a data type.
+.TP
+.B type rename \fIOLD\fR \fINEW\fR
+Rename a data type.
+.TP
+.B type apply \fIADDR\fR \fITYPE\fR
+Apply a type annotation at an address.
+.TP
+.B bookmark list [\fB\-\-type\fR \fITYPE\fR]
+List bookmarks, optionally filtered by type (e.g.,
+.BR Note ", " Warning ).
+.TP
+.B bookmark add \fIADDR\fR [\fB\-\-type\fR \fITYPE\fR] [\fB\-\-category\fR \fIC\fR] [\fB\-\-comment\fR \fITEXT\fR]
+Add a bookmark.
+.TP
+.B bookmark delete \fIADDR\fR [\fB\-\-type\fR \fITYPE\fR]
+Delete bookmark(s) at address.
+.SS "Binary patching"
+.TP
+.B patch bytes \fIADDR\fR \fIHEX\fR
+Overwrite bytes at address.
+.I HEX
+is a hex string, e.g.\&
+.BR 9090 .
+.TP
+.B patch nop \fIADDR\fR [\fB\-\-count\fR \fIN\fR]
+NOP-sled at address.
+.B Note:
+.B \-\-count
+is parsed but currently not forwarded to the bridge; only the single instruction at
+.I ADDR
+is NOPped.
+.TP
+.B patch export \fB\-o\fR \fIFILE\fR
+Export the patched binary to a file.
+.SS "Scripting and automation"
+.TP
+.B script run \fIPATH\fR [\fB\-\-\fR \fIARGS...\fR]
+Run a GhidraScript file.
+.TP
+.B script python \fICODE\fR
+Execute inline Python (Jython) code.
+.TP
+.B script java \fICODE\fR
+Execute inline Java code.
+.TP
+.B script list
+List available scripts.
+.TP
+.B batch \fIFILE\fR
+Execute a batch file of ghidra\-cli commands (one per line).
+.SS "Analyzer control"
+.TP
+.B analyzer list
+List all Ghidra analyzers and their enabled/disabled status.
+.TP
+.B analyzer set \fINAME\fR \fBtrue\fR|\fBfalse\fR
+Enable or disable an analyzer.
+.TP
+.B analyzer run
+Re-run auto-analysis.
+.SS "Configuration"
+.TP
+.B config list
+Show all configuration values.
+.TP
+.B config get \fIKEY\fR
+.TP
+.B config set \fIKEY\fR \fIVALUE\fR
+.TP
+.B config reset
+Reset configuration to defaults.
+.TP
+.B set\-default project \fINAME\fR
+Set the default project used when
+.B \-\-project
+is omitted.
+.SH OPTIONS
+.TP
+.B \-\-json
+Output as JSONL regardless of TTY state.  Shorthand for
+.BR "\-o json" .
+.TP
+.BI \-o " FORMAT" ", " \-\-format " FORMAT"
+Output format.
+.RS
+.TP
+.B compact
+One line per item, human-readable.  Default for TTY.
+.TP
+.B json
+JSONL: one JSON object per line.  Default for pipes.
+Pipe through
+.B "jq ."
+for pretty printing.
+.TP
+.B count
+Print only the item count.
+.RE
+.TP
+.BI \-\-fields " FIELD,...\fR"
+Comma-separated list of fields to include, e.g.\&
+.BR "name,address,size" .
+Reduces output size; any valid field name is accepted.
+.TP
+.BI \-\-limit " N"
+Return at most
+.I N
+results.  No default limit for
+.B comment list
+(see
+.SM BUGS\c
+).
+.TP
+.BI \-\-offset " N"
+Skip the first
+.I N
+results.
+.TP
+.BI \-\-sort " FIELD,..."
+Sort by field(s).  Prefix a field name with
+.B \-
+for descending order, e.g.\&
+.BR "\-size" .
+.TP
+.BI \-\-filter " EXPR"
+Server-side filter expression (see
+.SM "FILTER EXPRESSIONS"
+below).
+.TP
+.B \-\-count
+Return only the count of matching results.
+.TP
+.BI \-\-project " NAME"
+Project name or path.  May also be set via
+.BR GHIDRA_DEFAULT_PROJECT .
+.TP
+.BI \-\-program " NAME"
+Program name within the project.  May also be set via
+.BR GHIDRA_DEFAULT_PROGRAM .
+If omitted and the project contains exactly one program, that program is
+auto-selected.
+.TP
+.BR \-v ", " \-\-verbose
+Increase log verbosity printed to stdout.
+Use up to three times:
+.B \-v
+(warn),
+.B \-vv
+(info),
+.B \-vvv
+(debug).
+.TP
+.BR \-q ", " \-\-quiet
+Suppress non-essential output (progress, bridge startup messages).
+.SH "FILTER EXPRESSIONS"
+The
+.B \-\-filter
+flag accepts a simple expression language evaluated server-side by the bridge.
+.SS Operators
+.TS
+l l.
+=	exact match
+!=	not equal
+> >= < <=	numeric comparison
+~	contains (substring)
+^	starts with
+$	ends with
+=~	regex match
+IN	membership: \fBname IN ("main","start")\fR
+EXISTS	field is present and non-null
+AND OR NOT	logical combinators
+.TE
+.SS Examples
+.EX
+--filter "size > 100"
+--filter "name ~ 'crypt'"
+--filter "size > 100 AND name ~ 'main'"
+--filter "name =~ '^FUN_[0-9a-f]{8}$'"
+--filter "NOT name ^ 'FUN_'"
+.EE
+.SH "FUNCTION TARGETS"
+Commands that accept a function target resolve addresses in this order:
+.IP 1. 4
+Raw hex address with or without
+.B 0x
+prefix.
+.IP 2. 4
+Auto-name of the form
+.B FUN_<hex>
+(the hex part is extracted and used as an address).
+.IP 3. 4
+Symbol table lookup by exact name.
+.IP 4. 4
+Global symbol lookup.
+.IP 5. 4
+Full function scan (O(n)).
+.PP
+When a name is ambiguous or not found, the error message lists closest matches.
+.SH EXAMPLES
+.SS "First analysis of an unknown binary"
+.EX
+# Import (auto-analyzes) and check what we have
+ghidra\-cli import ./target --project rev
+ghidra\-cli summary --project rev
+ghidra\-cli stats --project rev
+
+# Find entry points and interesting names
+ghidra\-cli function list --filter "NOT name ^ 'FUN_'" \e
+    --fields name,address,size --limit 30 --project rev
+ghidra\-cli find crypto --project rev
+ghidra\-cli find string "password" --project rev
+
+# Decompile a suspicious function
+ghidra\-cli decompile verify_license --project rev
+ghidra\-cli graph callers verify_license --depth 3 --project rev
+ghidra\-cli x\-ref to verify_license --project rev
+.EE
+.SS "Type annotation to improve decompilation"
+.EX
+ghidra\-cli type create "struct FileHeader { int magic; short version; int offset; }" \e
+    --project rev
+ghidra\-cli type add\-field FileHeader --name flags --type "unsigned int" --project rev
+ghidra\-cli type apply 0x401000 FileHeader --project rev
+
+ghidra\-cli function set\-signature parse_header \e
+    --signature "int parse_header(FileHeader *hdr, char *buf, int len)" \e
+    --project rev
+ghidra\-cli function set\-var\-type parse_header \e
+    --var local_10 --type "FileHeader *" --project rev
+
+# Re-decompile to see improved output
+ghidra\-cli decompile parse_header --with\-vars --with\-params --project rev
+.EE
+.SS "Patching a binary"
+.EX
+# NOP out a license check
+ghidra\-cli disasm check_license --project rev
+ghidra\-cli patch nop 0x401234 --project rev
+
+# Overwrite a jump
+ghidra\-cli patch bytes 0x401234 "EB0A" --project rev
+
+# Export patched binary
+ghidra\-cli patch export \-o patched_target --project rev
+.EE
+.SS "Scripted batch workflow"
+.EX
+# batch.txt
+function list --fields name,address --json --project rev
+find crypto --project rev
+stats --project rev
+
+ghidra\-cli batch batch.txt
+.EE
+.SS "Piping through jq"
+.EX
+# Get function names sorted by size (largest first)
+ghidra\-cli function list --json --sort "\-size" --fields name,size \e
+    --project rev | jq '.name'
+
+# Find all functions calling malloc
+ghidra\-cli find calls malloc --json --project rev | jq '.address'
+.EE
+.SH ENVIRONMENT
+.TP
+.B GHIDRA_INSTALL_DIR
+Path to the Ghidra installation directory (the directory containing
+.IR support/analyzeHeadless ).
+Set automatically by the Nix flake.
+.TP
+.B GHIDRA_PROJECT_DIR
+Base directory for Ghidra projects.
+Default:
+.I ~/.local/share/ghidra-projects
+(Linux/macOS) or equivalent platform data dir.
+Note: Ghidra 12 rejects path components starting with
+.RB ` . ';
+avoid
+.IR ~/.cache .
+.TP
+.B GHIDRA_DEFAULT_PROJECT
+Default value for
+.B \-\-project
+when not specified.
+.TP
+.B GHIDRA_DEFAULT_PROGRAM
+Default value for
+.B \-\-program
+when not specified.
+.TP
+.B GHIDRA_CLI_CONFIG
+Override path to the configuration file.
+Default:
+.IR ~/.config/ghidra-cli/config.yaml .
+.TP
+.B RUST_LOG
+Standard Rust logging filter, e.g.\&
+.BR "ghidra_cli=debug" .
+.SH FILES
+.TP
+.I ~/.config/ghidra-cli/config.yaml
+Main configuration file.
+Keys:
+.B default_project\c
+,
+.B default_limit
+(applies to listing commands, not
+.BR "comment list" ).
+.TP
+.I ~/.config/ghidra-cli/scripts/GhidraCliBridge.java
+Materialized Java bridge script, written on every bridge start from the
+embedded copy in the binary.  Editing this file has no lasting effect;
+edit
+.I src/ghidra/scripts/GhidraCliBridge.java
+in the source tree instead.
+.TP
+.I ~/.local/share/ghidra-cli/bridge-\fIMD5\fR.port
+TCP port of the running bridge for the project whose path hashes to
+.IR MD5 .
+.TP
+.I ~/.local/share/ghidra-cli/bridge-\fIMD5\fR.pid
+PID of the running bridge process.
+.TP
+.I ~/.local/share/ghidra-cli/ghidra-cli.log.\fIDATE\fR
+Daily bridge log (Ghidra stdout/stderr, analysis progress).
+.SH DIAGNOSTICS
+.TP
+.B "No project specified"
+Add
+.B \-\-project NAME
+to the command, or run
+.B "ghidra\-cli set\-default project NAME"
+to set a persistent default.
+.TP
+.B "Ghidra installation directory not configured"
+Run
+.B "ghidra\-cli setup"
+to download and install Ghidra automatically, or set
+.B GHIDRA_INSTALL_DIR
+to an existing installation.
+.TP
+.B "Bridge not responding"
+Run
+.B "ghidra\-cli stop \-\-project P"
+and retry; the bridge auto-starts on the next command.
+.TP
+.B "Requested project program file(s) not found"
+The project directory exists but the named program was not imported.
+Run
+.B "ghidra\-cli import BINARY \-\-project P \-\-program NAME"
+first.
+.TP
+.B "Multiple programs found"
+The project contains more than one program.  Add
+.B "\-\-program NAME"
+to select one, or run
+.B "ghidra\-cli program list \-\-project P"
+to see available names.
+.TP
+.B "Cannot resolve function target"
+The function name or address was not found.  The error message includes
+closest matches.  Use
+.B "ghidra\-cli find function '*pattern*'"
+to search.
+.TP
+.B "Decompilation failed"
+The Ghidra decompiler returned an error.  On macOS ARM64, complex Rust entry
+points (especially
+.BR main )
+may not decompile; try a simpler function such as
+.BR factorial .
+.TP
+.B "Timed out waiting for bridge startup lock"
+Another bridge start is in progress (e.g., a concurrent test run).
+Wait for it to complete or remove stale
+.I .starting
+lock files from
+.IR ~/.local/share/ghidra-cli/ .
+.SH BUGS
+.IP \(bu 4
+.B "x\-ref list TARGET"
+— the optional TARGET argument is currently ignored at runtime; all xrefs
+in the program are listed.
+.IP \(bu 4
+.B "patch nop \-\-count N"
+— the
+.B \-\-count
+flag is parsed but not forwarded to the bridge; only the single instruction
+at the given address is NOP\-ped.
+.IP \(bu 4
+.B "comment set \-\-comment\-type"
+— the bridge expects a
+.B comment_type
+key but the client sends
+.BR type ;
+the comment type always falls back to
+.BR EOL .
+.SH "SEE ALSO"
+.BR "ghidra\-cli \-\-help" ,
+.BR "ghidra\-cli COMMAND \-\-help" ,
+.BR ghidra (1)

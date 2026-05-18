@@ -34,7 +34,8 @@
               filter = path: type:
                 (craneLib.filterCargoSources path type) ||
                 (lib.hasSuffix ".java" path) ||
-                (lib.hasSuffix ".pest" path);
+                (lib.hasSuffix ".pest" path) ||
+                (lib.hasSuffix ".1" path);   # man page sources
             };
             strictDeps = true;
             buildInputs = [
@@ -52,6 +53,9 @@
           ghidra-cli = craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts;
             doCheck = false;
+            postInstall = ''
+              installManPage docs/ghidra-cli.1
+            '';
           });
 
           ghidra-cli-wrapped = pkgs.symlinkJoin {

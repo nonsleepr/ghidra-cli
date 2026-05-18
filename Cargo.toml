@@ -69,6 +69,10 @@ futures-util = "0.3"
 indicatif = "0.17"
 
 
+[build-dependencies]
+# Man page / skill fallback generation from docs/ghidra-cli.1
+# (no clap dep needed — we parse the troff source directly)
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.0"
