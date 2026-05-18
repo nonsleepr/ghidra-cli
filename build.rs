@@ -120,7 +120,6 @@ fn generate_fallback_skill(man: &str, dest: &PathBuf) {
 
 fn man_to_text(troff: &str) -> String {
     let mut out = String::new();
-    let mut in_example = false;
 
     for line in troff.lines() {
         let t = line.trim_start();
@@ -141,7 +140,6 @@ fn man_to_text(troff: &str) -> String {
                     out.push('\n');
                     out.push_str(&"-".repeat(h.len()));
                     out.push('\n');
-                    in_example = false;
                 }
                 ".SS" => {
                     let h = strip_esc(
@@ -154,11 +152,9 @@ fn man_to_text(troff: &str) -> String {
                 }
                 ".TP" | ".PP" | ".IP" => out.push('\n'),
                 ".EX" => {
-                    in_example = true;
                     out.push_str("```\n");
                 }
                 ".EE" => {
-                    in_example = false;
                     out.push_str("```\n");
                 }
                 ".RS" | ".RE" | ".TS" | ".TE" => {}
@@ -245,9 +241,8 @@ fn strip_esc(s: &str) -> String {
                 b'(' => {
                     if i + 3 < b.len() {
                         let g = &s[i..i + 4];
-                        match g {
-                            r"\(bu" => out.push('\u{2022}'),
-                            _ => {}
+                        if g == r"\(bu" {
+                            out.push('\u{2022}');
                         }
                         i += 4;
                     } else {

@@ -1468,21 +1468,13 @@ fn test_program_close() {
         result.stderr
     );
 
-    // Re-open the program so subsequent tests in this suite still work.
-    // If close was a no-op (unsupported command), the program is already open.
+    // If close succeeded, currentProgram is now null inside the bridge.
+    // Restart the bridge so subsequent tests get a fresh program load.
     if result.exit_code == 0 && !result.stderr.contains("Bridge command not supported") {
-        let reopen = ghidra(harness)
-            .arg("program")
-            .arg("open")
-            .arg("--program")
-            .arg(TEST_PROGRAM)
-            .with_project(TEST_PROJECT, TEST_PROGRAM)
-            .run();
-        assert!(
-            reopen.exit_code == 0 || reopen.stderr.contains("Unknown command"),
-            "Re-open after close failed, subsequent tests may be broken: {}",
-            reopen.stderr
-        );
+        let stop = GhidraCommand::new().arg("stop").with_daemon(harness).run();
+        // Ignore stop errors — bridge may already be dead.
+        let _ = stop;
+        // The next test will auto-start the bridge.
     }
 }
 
