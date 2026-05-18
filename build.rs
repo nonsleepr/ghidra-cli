@@ -33,15 +33,43 @@ fn generate_fallback_skill(man: &str, dest: &PathBuf) {
     writeln!(out, "---").unwrap();
     writeln!(out, "name: ghidra-cli").unwrap();
     writeln!(out, "description: >").unwrap();
-    writeln!(out, "    Use ghidra-cli for reverse engineering tasks: binary analysis,").unwrap();
-    writeln!(out, "    decompilation, function inspection, cross-reference analysis,").unwrap();
-    writeln!(out, "    pattern discovery, binary patching, and type system management.").unwrap();
-    writeln!(out, "    Activate when the user requests binary analysis, decompilation,").unwrap();
-    writeln!(out, "    function/symbol/xref inspection, patching, or type annotation.").unwrap();
+    writeln!(
+        out,
+        "    Use ghidra-cli for reverse engineering tasks: binary analysis,"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "    decompilation, function inspection, cross-reference analysis,"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "    pattern discovery, binary patching, and type system management."
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "    Activate when the user requests binary analysis, decompilation,"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "    function/symbol/xref inspection, patching, or type annotation."
+    )
+    .unwrap();
     writeln!(out, "---").unwrap();
     writeln!(out).unwrap();
-    writeln!(out, "<!-- AUTO-GENERATED from docs/ghidra-cli.1 by build.rs -->").unwrap();
-    writeln!(out, "<!-- Do not edit by hand. Run `cargo build` or `scripts/regen-skill.sh`. -->").unwrap();
+    writeln!(
+        out,
+        "<!-- AUTO-GENERATED from docs/ghidra-cli.1 by build.rs -->"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "<!-- Do not edit by hand. Run `cargo build` or `scripts/regen-skill.sh`. -->"
+    )
+    .unwrap();
     writeln!(out).unwrap();
     writeln!(out, "# ghidra-cli \u{2014} Fallback Reference").unwrap();
     writeln!(out).unwrap();
@@ -50,7 +78,11 @@ fn generate_fallback_skill(man: &str, dest: &PathBuf) {
         "This file is auto-generated for use when `man ghidra-cli` is not available."
     )
     .unwrap();
-    writeln!(out, "For the full reference run `man ghidra-cli` or `ghidra-cli --help`.").unwrap();
+    writeln!(
+        out,
+        "For the full reference run `man ghidra-cli` or `ghidra-cli --help`."
+    )
+    .unwrap();
     writeln!(out).unwrap();
 
     let sections = [
@@ -98,7 +130,12 @@ fn man_to_text(troff: &str) -> String {
             match tok[0] {
                 ".TH" => {}
                 ".SH" => {
-                    let h = strip_esc(tok.get(1..).map(|p| p.join(" ")).unwrap_or_default().as_str());
+                    let h = strip_esc(
+                        tok.get(1..)
+                            .map(|p| p.join(" "))
+                            .unwrap_or_default()
+                            .as_str(),
+                    );
                     out.push('\n');
                     out.push_str(&h);
                     out.push('\n');
@@ -107,16 +144,35 @@ fn man_to_text(troff: &str) -> String {
                     in_example = false;
                 }
                 ".SS" => {
-                    let h = strip_esc(tok.get(1..).map(|p| p.join(" ")).unwrap_or_default().as_str());
+                    let h = strip_esc(
+                        tok.get(1..)
+                            .map(|p| p.join(" "))
+                            .unwrap_or_default()
+                            .as_str(),
+                    );
                     out.push_str(&format!("\n### {}\n", h));
                 }
                 ".TP" | ".PP" | ".IP" => out.push('\n'),
-                ".EX" => { in_example = true;  out.push_str("```\n"); }
-                ".EE" => { in_example = false; out.push_str("```\n"); }
+                ".EX" => {
+                    in_example = true;
+                    out.push_str("```\n");
+                }
+                ".EE" => {
+                    in_example = false;
+                    out.push_str("```\n");
+                }
                 ".RS" | ".RE" | ".TS" | ".TE" => {}
                 ".B" | ".I" | ".BI" | ".BR" => {
-                    let c = strip_esc(tok.get(1..).map(|p| p.join(" ")).unwrap_or_default().as_str());
-                    if !c.is_empty() { out.push_str(&c); out.push('\n'); }
+                    let c = strip_esc(
+                        tok.get(1..)
+                            .map(|p| p.join(" "))
+                            .unwrap_or_default()
+                            .as_str(),
+                    );
+                    if !c.is_empty() {
+                        out.push_str(&c);
+                        out.push('\n');
+                    }
                 }
                 _ => {}
             }
@@ -125,7 +181,9 @@ fn man_to_text(troff: &str) -> String {
 
         let clean = strip_esc(t);
         if clean.is_empty() {
-            if !out.ends_with("\n\n") { out.push('\n'); }
+            if !out.ends_with("\n\n") {
+                out.push('\n');
+            }
         } else {
             out.push_str(&clean);
             out.push('\n');
@@ -139,7 +197,9 @@ fn extract_section<'a>(plain: &'a str, name: &str) -> Option<&'a str> {
     let start = plain.find(&needle)?;
     let after_header = start + needle.len();
     // skip underline row
-    let underline_end = plain[after_header..].find('\n').map(|i| after_header + i + 1)?;
+    let underline_end = plain[after_header..]
+        .find('\n')
+        .map(|i| after_header + i + 1)?;
     let rest = &plain[underline_end..];
 
     // Find the next section underline (a line of all dashes, len > 2)
@@ -167,22 +227,37 @@ fn strip_esc(s: &str) -> String {
                 b'f' => {
                     i += 2;
                     if i < b.len() && b[i] == b'[' {
-                        while i < b.len() && b[i] != b']' { i += 1; }
+                        while i < b.len() && b[i] != b']' {
+                            i += 1;
+                        }
                         i += 1;
                     } else {
                         i += 1;
                     }
                 }
-                b'c' | b'&' => { i += 2; }
-                b'-' => { out.push('-'); i += 2; }
+                b'c' | b'&' => {
+                    i += 2;
+                }
+                b'-' => {
+                    out.push('-');
+                    i += 2;
+                }
                 b'(' => {
                     if i + 3 < b.len() {
                         let g = &s[i..i + 4];
-                        match g { r"\(bu" => out.push('\u{2022}'), _ => {} }
+                        match g {
+                            r"\(bu" => out.push('\u{2022}'),
+                            _ => {}
+                        }
                         i += 4;
-                    } else { i += 1; }
+                    } else {
+                        i += 1;
+                    }
                 }
-                _ => { out.push('\\'); i += 1; }
+                _ => {
+                    out.push('\\');
+                    i += 1;
+                }
             }
         } else {
             out.push(b[i] as char);
