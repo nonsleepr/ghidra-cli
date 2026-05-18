@@ -22,6 +22,9 @@ target
 
 .opencode/
 
+# Research notes (local only, not for the repo)
+research/
+
 # Nix build results
 result
 result-*
