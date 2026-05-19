@@ -85,14 +85,14 @@ jobs:
             ~/Library/Preferences/ghidra-cli
             ~/AppData/Local/ghidra-cli
             ~/AppData/Roaming/ghidra-cli
-          key: ghidra-${{ matrix.os }}-v5
+          key: ghidra-${{ matrix.os }}-v6
 
       - name: Cache Ghidra projects
         id: project-cache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/ghidra-projects
-          key: ghidra-projects-${{ matrix.os }}-v5-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          key: ghidra-projects-${{ matrix.os }}-v6-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -114,14 +114,51 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Remove macOS quarantine from Ghidra (macOS only)
+      - name: Build Ghidra native decompiler for macOS arm64 if missing
         if: runner.os == 'macOS'
         run: |
-          find ~/Library/Application\ Support/ghidra-cli -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
-          find ~/.local/share/ghidra-cli -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
-          echo "=== Decompiler OS directories ==="
-          find ~/Library/Application\ Support/ghidra-cli -path "*/Decompiler/os" -exec ls -la {} \; 2>/dev/null || true
+          GHIDRA_BASE="$HOME/Library/Application Support/ghidra-cli/ghidra"
+          GHIDRA_DIR=$(ls -d "$GHIDRA_BASE"/ghidra_* 2>/dev/null | head -1)
+          if [ -z "$GHIDRA_DIR" ]; then
+            echo "No Ghidra installation found, skipping native build"
+            exit 0
+          fi
+          DECOMPILE_BIN="$GHIDRA_DIR/Ghidra/Features/Decompiler/os/mac_arm_64/decompile"
+          if [ -f "$DECOMPILE_BIN" ]; then
+            echo "mac_arm_64/decompile already present, skipping build"
+            exit 0
+          fi
+          echo "mac_arm_64/decompile not found — building from Ghidra source"
+          # Determine Ghidra version from application.properties
+          GHIDRA_VER=$(grep "^application.version=" "$GHIDRA_DIR/Ghidra/application.properties" | cut -d= -f2)
+          GHIDRA_TAG="Ghidra_${GHIDRA_VER}_build"
+          echo "Ghidra version: $GHIDRA_VER  tag: $GHIDRA_TAG"
+          # Sparse-clone just the decompiler C++ sources
+          BUILD_DIR=$(mktemp -d)
+          git clone --depth=1 --filter=blob:none --sparse \
+            "https://github.com/NationalSecurityAgency/ghidra.git" \
+            --branch "$GHIDRA_TAG" "$BUILD_DIR"
+          git -C "$BUILD_DIR" sparse-checkout set \
+            "Ghidra/Features/Decompiler/src/decompile/cpp"
+          CPP_DIR="$BUILD_DIR/Ghidra/Features/Decompiler/src/decompile/cpp"
+          cd "$CPP_DIR"
+          # Build ghidra_opt for arm64 using the Makefile with overridden arch/os settings
+          make ghidra_opt \
+            ARCH_TYPE="-arch arm64" \
+            ADDITIONAL_FLAGS="" \
+            OSDIR="mac_arm_64" \
+            CXX="clang++ -std=c++11"
+          # Install
+          mkdir -p "$(dirname "$DECOMPILE_BIN")"
+          cp "$CPP_DIR/ghidra_opt" "$DECOMPILE_BIN"
+          chmod +x "$DECOMPILE_BIN"
+          echo "Built and installed: $DECOMPILE_BIN"
+          file "$DECOMPILE_BIN"
+          ls -la "$GHIDRA_DIR/Ghidra/Features/Decompiler/os/"
+          # Cleanup
+          rm -rf "$BUILD_DIR"
         shell: bash
+        timeout-minutes: 15
 
       - name: Create test project (skip if cached)
         run: |
@@ -166,13 +203,13 @@ jobs:
             ~/Library/Preferences/ghidra-cli
             ~/AppData/Local/ghidra-cli
             ~/AppData/Roaming/ghidra-cli
-          key: ghidra-${{ matrix.os }}-v5
+          key: ghidra-${{ matrix.os }}-v6
 
       - name: Restore Ghidra projects
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/ghidra-projects
-          key: ghidra-projects-${{ matrix.os }}-v5-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          key: ghidra-projects-${{ matrix.os }}-v6-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -197,8 +234,8 @@ jobs:
       - name: Remove macOS quarantine from Ghidra (macOS only)
         if: runner.os == 'macOS'
         run: |
-          find ~/Library/Application\ Support/ghidra-cli -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
-          find ~/.local/share/ghidra-cli -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
+          find "$HOME/Library/Application Support/ghidra-cli" -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
+          find "$HOME/.local/share/ghidra-cli" -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
         shell: bash
 
       - name: Run read-only integration tests
@@ -243,13 +280,13 @@ jobs:
             ~/Library/Preferences/ghidra-cli
             ~/AppData/Local/ghidra-cli
             ~/AppData/Roaming/ghidra-cli
-          key: ghidra-${{ matrix.os }}-v5
+          key: ghidra-${{ matrix.os }}-v6
 
       - name: Restore Ghidra projects
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/ghidra-projects
-          key: ghidra-projects-${{ matrix.os }}-v5-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          key: ghidra-projects-${{ matrix.os }}-v6-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -274,8 +311,8 @@ jobs:
       - name: Remove macOS quarantine from Ghidra (macOS only)
         if: runner.os == 'macOS'
         run: |
-          find ~/Library/Application\ Support/ghidra-cli -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
-          find ~/.local/share/ghidra-cli -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
+          find "$HOME/Library/Application Support/ghidra-cli" -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
+          find "$HOME/.local/share/ghidra-cli" -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
         shell: bash
 
       - name: Run mutation integration tests
@@ -320,13 +357,13 @@ jobs:
             ~/Library/Preferences/ghidra-cli
             ~/AppData/Local/ghidra-cli
             ~/AppData/Roaming/ghidra-cli
-          key: ghidra-${{ matrix.os }}-v5
+          key: ghidra-${{ matrix.os }}-v6
 
       - name: Restore Ghidra projects
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/ghidra-projects
-          key: ghidra-projects-${{ matrix.os }}-v5-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          key: ghidra-projects-${{ matrix.os }}-v6-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -351,8 +388,8 @@ jobs:
       - name: Remove macOS quarantine from Ghidra (macOS only)
         if: runner.os == 'macOS'
         run: |
-          find ~/Library/Application\ Support/ghidra-cli -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
-          find ~/.local/share/ghidra-cli -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
+          find "$HOME/Library/Application Support/ghidra-cli" -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
+          find "$HOME/.local/share/ghidra-cli" -name "decompile" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
         shell: bash
 
       - name: Run infrastructure tests
