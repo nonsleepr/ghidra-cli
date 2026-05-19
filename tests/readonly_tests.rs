@@ -1469,11 +1469,13 @@ fn test_program_close() {
     );
 
     // If close succeeded, currentProgram is now null inside the bridge.
-    // Restart the bridge so subsequent tests get a fresh program load.
+    // Stop the bridge directly (no subprocess) so subsequent tests get a
+    // fresh bridge start with currentProgram reloaded.
+    // We use stop_bridge() instead of spawning `ghidra stop` because on
+    // Windows the CLI subprocess inherits pipe handles from the JVM and
+    // can hang indefinitely.
     if result.exit_code == 0 && !result.stderr.contains("Bridge command not supported") {
-        let stop = GhidraCommand::new().arg("stop").with_daemon(harness).run();
-        // Ignore stop errors — bridge may already be dead.
-        let _ = stop;
+        harness.stop_bridge();
         // The next test will auto-start the bridge.
     }
 }

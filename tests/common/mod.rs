@@ -238,6 +238,11 @@ impl DaemonTestHarness {
     pub fn port(&self) -> u16 {
         self.port
     }
+
+    /// Stop the bridge directly via the bridge API (no subprocess, safe on Windows).
+    pub fn stop_bridge(&self) {
+        let _ = ghidra_cli::ghidra::bridge::stop_bridge(&self.project_path);
+    }
 }
 
 impl Drop for DaemonTestHarness {
