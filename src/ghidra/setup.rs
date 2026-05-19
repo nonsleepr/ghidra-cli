@@ -242,6 +242,18 @@ pub async fn install_ghidra(version: Option<String>, target_dir: PathBuf) -> Res
     // Extract the zip
     let install_path = extract_zip(&zip_path, &target_dir)?;
 
+    // On macOS, remove the quarantine extended attribute so Gatekeeper does not
+    // block the native decompiler binary (and other executables) from running.
+    // Without this, the first run after download would fail with "Could not find
+    // decompiler executable" even though the binary exists.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("xattr")
+            .args(["-dr", "com.apple.quarantine"])
+            .arg(&install_path)
+            .status();
+    }
+
     // Cleanup zip file
     if let Err(e) = std::fs::remove_file(&zip_path) {
         println!("⚠ Could not remove zip file: {}", e);
