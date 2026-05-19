@@ -80,6 +80,7 @@ jobs:
         with:
           path: |
             ~/.local/share/ghidra-cli
+            ~/.ghidra
             ~/.config/ghidra-cli
             ~/Library/Application Support/ghidra-cli
             ~/Library/Preferences/ghidra-cli
@@ -198,6 +199,7 @@ jobs:
         with:
           path: |
             ~/.local/share/ghidra-cli
+            ~/.ghidra
             ~/.config/ghidra-cli
             ~/Library/Application Support/ghidra-cli
             ~/Library/Preferences/ghidra-cli
@@ -275,6 +277,7 @@ jobs:
         with:
           path: |
             ~/.local/share/ghidra-cli
+            ~/.ghidra
             ~/.config/ghidra-cli
             ~/Library/Application Support/ghidra-cli
             ~/Library/Preferences/ghidra-cli
@@ -352,6 +355,7 @@ jobs:
         with:
           path: |
             ~/.local/share/ghidra-cli
+            ~/.ghidra
             ~/.config/ghidra-cli
             ~/Library/Application Support/ghidra-cli
             ~/Library/Preferences/ghidra-cli

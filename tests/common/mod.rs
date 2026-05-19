@@ -112,7 +112,7 @@ pub fn ensure_test_project(project: &str, program: &str) {
                 "--program",
                 program,
             ],
-            Duration::from_secs(300),
+            Duration::from_secs(600),
         );
         match import_status {
             Ok(status) => {

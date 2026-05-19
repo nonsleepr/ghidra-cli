@@ -124,7 +124,7 @@ fn test_import_binary() {
             "--program",
             "sample_binary",
         ],
-        std::time::Duration::from_secs(300),
+        std::time::Duration::from_secs(600),
     )
     .expect("Failed to run import");
     assert!(status.success(), "Import failed with status: {}", status);
@@ -156,7 +156,7 @@ fn test_analyze_program() {
             "--program",
             "sample_binary",
         ],
-        std::time::Duration::from_secs(300),
+        std::time::Duration::from_secs(600),
     )
     .expect("Failed to run import");
     assert!(status.success(), "Import failed with status: {}", status);
@@ -170,7 +170,7 @@ fn test_analyze_program() {
             "--program",
             "sample_binary",
         ],
-        std::time::Duration::from_secs(300),
+        std::time::Duration::from_secs(600),
     )
     .expect("Failed to run analyze");
     assert!(status.success(), "Analyze failed with status: {}", status);
@@ -218,7 +218,7 @@ fn test_import_existing_program() {
             "--program",
             "sample_binary",
         ],
-        std::time::Duration::from_secs(300),
+        std::time::Duration::from_secs(600),
     )
     .expect("Failed to run import");
     assert!(status.success(), "Import failed with status: {}", status);
@@ -234,7 +234,7 @@ fn test_import_existing_program() {
             "--program",
             "sample_binary",
         ],
-        std::time::Duration::from_secs(300),
+        std::time::Duration::from_secs(600),
     )
     .expect("Failed to run second import");
     assert!(

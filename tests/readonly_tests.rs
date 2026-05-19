@@ -1476,7 +1476,44 @@ fn test_program_close() {
     // can hang indefinitely.
     if result.exit_code == 0 && !result.stderr.contains("Bridge command not supported") {
         harness.stop_bridge();
-        // The next test will auto-start the bridge.
+
+        // On macOS, Ghidra's graceful shutdown can corrupt the project files
+        // (.gpr truncated to 0 bytes, .rep/idata emptied). Re-import to repair
+        // before the next test auto-starts the bridge.
+        let config = ghidra_cli::config::Config::load().expect("Failed to load config");
+        let projects_dir = config.get_project_dir().expect("Could not determine project dir");
+        let gpr_file = projects_dir.join(format!("{}.gpr", TEST_PROJECT));
+        let rep_dir = projects_dir.join(format!("{}.rep", TEST_PROJECT));
+        let idata_dir = rep_dir.join("idata");
+        let idata_has_data = idata_dir.is_dir()
+            && std::fs::read_dir(&idata_dir)
+                .map(|entries| {
+                    entries
+                        .filter_map(|e| e.ok())
+                        .any(|e| e.file_name() != "~index.dat")
+                })
+                .unwrap_or(false);
+        let project_valid = gpr_file.exists()
+            && gpr_file.metadata().map(|m| m.len() > 0).unwrap_or(false)
+            && idata_has_data;
+
+        if !project_valid {
+            eprintln!("test_program_close: project data corrupted after stop, re-importing...");
+            let _ = std::fs::remove_file(&gpr_file);
+            let _ = std::fs::remove_dir_all(&rep_dir);
+            let binary = common::fixture_binary();
+            let ghidra_bin = assert_cmd::cargo::cargo_bin!("ghidra-cli");
+            let _ = common::run_cli_with_timeout(
+                ghidra_bin,
+                &[
+                    "import",
+                    binary.to_str().unwrap(),
+                    "--project", TEST_PROJECT,
+                    "--program", TEST_PROGRAM,
+                ],
+                std::time::Duration::from_secs(600),
+            );
+        }
     }
 }
 
