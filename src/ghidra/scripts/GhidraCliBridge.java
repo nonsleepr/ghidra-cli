@@ -786,8 +786,7 @@ public class GhidraCliBridge extends GhidraScript {
         try {
             decompiler.openProgram(currentProgram);
 
-            TaskMonitor mon = new ConsoleTaskMonitor();
-            DecompileResults results = decompiler.decompileFunction(func, 30, mon);
+            DecompileResults results = decompiler.decompileFunction(func, 30, TaskMonitor.DUMMY);
 
             if (results.decompileCompleted()) {
                 String code = results.getDecompiledFunction().getC();
@@ -2757,7 +2756,7 @@ public class GhidraCliBridge extends GhidraScript {
             DecompInterface decompiler = new DecompInterface();
             try {
                 decompiler.openProgram(currentProgram);
-                TaskMonitor mon = new ConsoleTaskMonitor();
+                TaskMonitor mon = TaskMonitor.DUMMY;
                 DecompileResults results = decompiler.decompileFunction(func, 30, mon);
                 if (!results.decompileCompleted()) {
                     return errorResult("Decompilation failed for " + funcTarget + ": " + decompileFailureReason(results));
@@ -2860,7 +2859,7 @@ public class GhidraCliBridge extends GhidraScript {
                 DecompInterface decomp = new DecompInterface();
                 try {
                     decomp.openProgram(currentProgram);
-                    DecompileResults results = decomp.decompileFunction(func, 30, new ConsoleTaskMonitor());
+                    DecompileResults results = decomp.decompileFunction(func, 30, TaskMonitor.DUMMY);
                     if (!results.decompileCompleted()) {
                         return errorResult("Decompilation failed for " + func.getName() + ": " + decompileFailureReason(results));
                     }
@@ -3656,7 +3655,7 @@ public class GhidraCliBridge extends GhidraScript {
             DecompInterface decompiler = new DecompInterface();
             try {
                 decompiler.openProgram(currentProgram);
-                TaskMonitor mon = new ConsoleTaskMonitor();
+                TaskMonitor mon = TaskMonitor.DUMMY;
 
                 DecompileResults res1 = decompiler.decompileFunction(func1, 30, mon);
                 DecompileResults res2 = decompiler.decompileFunction(func2, 30, mon);

@@ -311,6 +311,30 @@ pub fn start_bridge(
         .arg("GhidraCliBridge.java")
         .arg(port_file.to_str().unwrap());
 
+    // On Windows, we must NOT use Stdio::piped() for the bridge process.
+    //
+    // The analyzeHeadless.bat → cmd.exe → java.exe chain on Windows inherits
+    // ALL inheritable handles from the spawning process (bInheritHandles=TRUE
+    // in CreateProcess). When ghidra-cli is itself invoked by assert_cmd in
+    // tests, assert_cmd creates anonymous pipes for stdout/stderr of the CLI
+    // process. Those pipe write-handles become inheritable in the CLI process
+    // and flow into the bridge JVM. After ghidra-cli exits, the JVM still holds
+    // the pipe write-ends open, so assert_cmd's reader threads block on
+    // read_to_end() forever — assert_cmd's process-kill timeout fires but the
+    // join() on the reader threads never returns.
+    //
+    // Fix: use Stdio::null() on Windows so no inheritable pipe handles are
+    // created. Bridge readiness is detected via port-file polling + TCP connect
+    // (the fallback path already implemented below).
+    //
+    // On Unix, Stdio::piped() is safe because file descriptors are not inherited
+    // across exec unless O_CLOEXEC is absent, and Rust marks them CLOEXEC by
+    // default. We keep piped I/O on Unix for faster error reporting.
+    #[cfg(target_os = "windows")]
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(not(target_os = "windows"))]
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -325,59 +349,80 @@ pub fn start_bridge(
     // before the ready signal (Java overwrites this once it binds the ServerSocket)
     write_pid_file(project_path, child.id()).ok();
 
-    // Spawn a thread to capture stderr
-    let stderr = child.stderr.take().expect("stderr should be piped");
-    let stderr_handle = std::thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        let mut stderr_output = Vec::new();
-        for line in reader.lines().map_while(Result::ok) {
-            info!("[Ghidra stderr] {}", line);
-            stderr_output.push(line);
-        }
-        stderr_output
-    });
+    // Spawn a thread to capture stderr (Unix only; on Windows stderr is null)
+    #[cfg(not(target_os = "windows"))]
+    let stderr_handle = {
+        let stderr = child.stderr.take().expect("stderr should be piped");
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut stderr_output = Vec::new();
+            for line in reader.lines().map_while(Result::ok) {
+                info!("[Ghidra stderr] {}", line);
+                stderr_output.push(line);
+            }
+            stderr_output
+        })
+    };
+    #[cfg(target_os = "windows")]
+    let stderr_handle: std::thread::JoinHandle<Vec<String>> =
+        std::thread::spawn(|| Vec::new());
 
     // Wait for bridge to become ready.
     //
     // Two mechanisms run in parallel:
-    // 1. Stdout reader thread - watches for the JSON ready signal (fast path)
+    // 1. Stdout reader thread - watches for the JSON ready signal (fast path, Unix only)
     // 2. Port file poller - polls port file + TCP ping as fallback
     //
-    // On Windows, stdout piping through analyzeHeadless.bat → cmd.exe → java.exe
-    // can fail due to buffering, so the port file fallback is essential.
-    let stdout = child.stdout.take().expect("stdout should be piped");
-    let (stdout_tx, stdout_rx) = std::sync::mpsc::channel();
-    let stdout_handle = std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        let mut last_error = String::new();
-        let mut stdout_lines = Vec::new();
-        for line in reader.lines() {
-            let line = match line {
-                Ok(l) => l,
-                Err(_) => break,
-            };
-            info!("[Ghidra stdout] {}", line);
-            stdout_lines.push(line.clone());
+    // On Windows, stdout/stderr are null (to avoid pipe handle inheritance through
+    // the analyzeHeadless.bat → cmd.exe → java.exe chain), so we rely solely on
+    // the port file fallback.
+    #[cfg(not(target_os = "windows"))]
+    let (stdout_rx, stdout_handle) = {
+        let stdout = child.stdout.take().expect("stdout should be piped");
+        let (stdout_tx, stdout_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            let mut last_error = String::new();
+            let mut stdout_lines = Vec::new();
+            for line in reader.lines() {
+                let line = match line {
+                    Ok(l) => l,
+                    Err(_) => break,
+                };
+                info!("[Ghidra stdout] {}", line);
+                stdout_lines.push(line.clone());
 
-            if line.contains("ERROR") || line.contains("Exception") || line.contains("SEVERE") {
-                last_error = line.clone();
-            }
+                if line.contains("ERROR") || line.contains("Exception") || line.contains("SEVERE") {
+                    last_error = line.clone();
+                }
 
-            if line.contains("---GHIDRA_CLI_START---") {
-                continue;
+                if line.contains("---GHIDRA_CLI_START---") {
+                    continue;
+                }
+                if line.contains("\"status\"") && line.contains("\"ready\"") {
+                    info!("Bridge is ready (stdout signal)");
+                    let _ = stdout_tx.send(true);
+                    return (true, last_error, stdout_lines);
+                }
+                if line.contains("---GHIDRA_CLI_END---") {
+                    break;
+                }
             }
-            if line.contains("\"status\"") && line.contains("\"ready\"") {
-                info!("Bridge is ready (stdout signal)");
-                let _ = stdout_tx.send(true);
-                return (true, last_error, stdout_lines);
-            }
-            if line.contains("---GHIDRA_CLI_END---") {
-                break;
-            }
-        }
-        let _ = stdout_tx.send(false);
-        (false, last_error, stdout_lines)
-    });
+            let _ = stdout_tx.send(false);
+            (false, last_error, stdout_lines)
+        });
+        (stdout_rx, handle)
+    };
+    #[cfg(target_os = "windows")]
+    let (stdout_rx, stdout_handle): (
+        std::sync::mpsc::Receiver<bool>,
+        std::thread::JoinHandle<(bool, String, Vec<String>)>,
+    ) = {
+        let (stdout_tx, stdout_rx) = std::sync::mpsc::channel::<bool>();
+        drop(stdout_tx); // immediately closed; never sends
+        let handle = std::thread::spawn(|| (false, String::new(), Vec::new()));
+        (stdout_rx, handle)
+    };
 
     // Poll for readiness: check stdout channel and port file + TCP connect
     let ready_timeout = Duration::from_secs(120);
