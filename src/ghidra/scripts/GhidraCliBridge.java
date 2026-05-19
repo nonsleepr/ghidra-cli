@@ -784,7 +784,9 @@ public class GhidraCliBridge extends GhidraScript {
 
         DecompInterface decompiler = new DecompInterface();
         try {
-            decompiler.openProgram(currentProgram);
+            if (!decompiler.openProgram(currentProgram)) {
+                return errorResult("Decompilation failed: openProgram failed: " + decompiler.getLastMessage());
+            }
 
             DecompileResults results = decompiler.decompileFunction(func, 30, TaskMonitor.DUMMY);
 
@@ -2755,7 +2757,9 @@ public class GhidraCliBridge extends GhidraScript {
 
             DecompInterface decompiler = new DecompInterface();
             try {
-                decompiler.openProgram(currentProgram);
+                if (!decompiler.openProgram(currentProgram)) {
+                    return errorResult("Decompilation failed: openProgram failed: " + decompiler.getLastMessage());
+                }
                 TaskMonitor mon = TaskMonitor.DUMMY;
                 DecompileResults results = decompiler.decompileFunction(func, 30, mon);
                 if (!results.decompileCompleted()) {
@@ -2858,7 +2862,9 @@ public class GhidraCliBridge extends GhidraScript {
             if (highPcode) {
                 DecompInterface decomp = new DecompInterface();
                 try {
-                    decomp.openProgram(currentProgram);
+                    if (!decomp.openProgram(currentProgram)) {
+                        return errorResult("Decompilation failed: openProgram failed: " + decomp.getLastMessage());
+                    }
                     DecompileResults results = decomp.decompileFunction(func, 30, TaskMonitor.DUMMY);
                     if (!results.decompileCompleted()) {
                         return errorResult("Decompilation failed for " + func.getName() + ": " + decompileFailureReason(results));
@@ -3654,7 +3660,9 @@ public class GhidraCliBridge extends GhidraScript {
 
             DecompInterface decompiler = new DecompInterface();
             try {
-                decompiler.openProgram(currentProgram);
+                if (!decompiler.openProgram(currentProgram)) {
+                    return errorResult("Decompilation failed: openProgram failed: " + decompiler.getLastMessage());
+                }
                 TaskMonitor mon = TaskMonitor.DUMMY;
 
                 DecompileResults res1 = decompiler.decompileFunction(func1, 30, mon);
