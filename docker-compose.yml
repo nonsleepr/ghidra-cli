@@ -1,0 +1,20 @@
+# Long-running ghidra-cli container. A fresh `docker run` per command would
+# pay Ghidra's JVM startup cost (~10-30s) every time because the bridge dies
+# with the container. Keeping the container alive lets the bridge for a given
+# project stay warm across commands.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose exec ghidra-cli ghidra-cli import /binaries/app --project myproject --program app
+#   docker compose exec ghidra-cli ghidra-cli analyze --project myproject --program app
+#   docker compose exec ghidra-cli ghidra-cli function list --project myproject --program app
+#   docker compose down   # stops the bridge along with the container
+services:
+  ghidra-cli:
+    build: .
+    image: ghidra-cli:latest
+    entrypoint: ["sleep", "infinity"]
+    volumes:
+      - ./projects:/projects
+      - ./binaries:/binaries
+    working_dir: /work

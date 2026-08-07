@@ -28,3 +28,7 @@ research/
 # Nix build results
 result
 result-*
+
+# Default docker-compose.yml bind-mount targets
+/projects/
+/binaries/

@@ -42,7 +42,45 @@ The CLI connects directly to a Java bridge running inside Ghidra's JVM. This pro
 
 ## Installation
 
-### Nix Flake (recommended)
+### Docker (recommended)
+
+The image bundles `ghidra-cli`, a JDK, and the latest Ghidra release, so there's
+nothing to install on the host besides Docker itself — no Rust toolchain, no
+manual Ghidra/Java setup, no Nix.
+
+```bash
+git clone https://github.com/nonsleepr/ghidra-cli
+cd ghidra-cli
+docker compose up -d
+docker compose exec ghidra-cli ghidra-cli import /binaries/app --project myproject --program app
+docker compose exec ghidra-cli ghidra-cli analyze --project myproject --program app
+docker compose exec ghidra-cli ghidra-cli decompile main --project myproject --program app
+docker compose down
+```
+
+`./projects` and `./binaries` on the host are mounted to `/projects` and
+`/binaries` in the container (see `docker-compose.yml`) — drop binaries into
+`./binaries` and Ghidra projects persist in `./projects` across restarts.
+
+The container is kept running (`sleep infinity`) rather than exited after each
+command: each `import`/`analyze`/query auto-starts a per-project Ghidra bridge
+that takes ~10-30s to boot, and that bridge dies with the container. Running
+commands via `docker compose exec` against a long-lived container lets the
+bridge stay warm across commands. If Docker Compose isn't available, the same
+long-lived-container pattern works with plain `docker run -d --entrypoint sleep`
++ `docker exec` — see `.claude/skills/ghidra-cli/SKILL.md` for that form. For a
+one-off, stateless invocation you can still do:
+
+```bash
+docker build -t ghidra-cli .
+docker run --rm -v "$PWD/projects:/projects" -v "$PWD/binaries:/binaries" \
+  ghidra-cli import /binaries/app --project myproject --program app
+```
+
+Pin a specific Ghidra version instead of the latest release with
+`docker build --build-arg GHIDRA_VERSION=12.1.2 -t ghidra-cli .`.
+
+### Nix Flake
 
 ```bash
 # Run directly
@@ -60,7 +98,9 @@ cd ghidra-cli
 cargo install --path .
 ```
 
-### Requirements
+### Requirements (Nix Flake / From Source only)
+
+Not applicable if you're using Docker — the image already bundles all of this.
 
 - **Ghidra 12.0+** - Download from [ghidra-sre.org](https://ghidra-sre.org)
 - **Java 17+** - Required by Ghidra
@@ -76,11 +116,14 @@ ghidra-cli config set ghidra_install_dir /path/to/ghidra
 ## Quick Start
 
 ```bash
+docker compose up -d
+alias ghidra-cli="docker compose exec ghidra-cli ghidra-cli"
+
 # Check installation
 ghidra-cli doctor
 
-# Import and analyze a binary (bridge auto-starts)
-ghidra-cli import ./binary --project myproject --program mybinary
+# Import and analyze a binary (bridge auto-starts) - path is inside the container, under /binaries
+ghidra-cli import /binaries/mybinary --project myproject --program mybinary
 ghidra-cli analyze --project myproject --program mybinary
 
 # Query functions (uses running bridge)
@@ -98,6 +141,10 @@ ghidra-cli x-ref to 0x401000
 # Generate call graph
 ghidra-cli graph callers main --depth 3
 ```
+
+Installed natively via Nix or `cargo install` instead? Drop the
+`docker compose exec ghidra-cli` alias and run `ghidra-cli` directly — every
+command below is identical either way.
 
 ## Commands
 
