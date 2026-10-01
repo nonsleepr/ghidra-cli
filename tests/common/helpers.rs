@@ -151,7 +151,7 @@ impl GhidraResult {
             .lines()
             .map(|l| l.trim())
             .filter(|l| !l.is_empty())
-            .map(|l| serde_json::from_str(l))
+            .map(serde_json::from_str)
             .collect::<Result<_, _>>()
             .ok()?;
         if items.is_empty() {

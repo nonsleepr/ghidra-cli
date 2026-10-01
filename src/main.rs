@@ -155,6 +155,9 @@ fn extract_project_from_command(command: &Commands) -> Option<String> {
             cli::FunctionCommands::SetReturnType(args) => args.project.clone(),
             cli::FunctionCommands::SetCallingConvention(args) => args.project.clone(),
             cli::FunctionCommands::SetVarType(args) => args.project.clone(),
+            cli::FunctionCommands::SetNoReturn(args) => args.project.clone(),
+            cli::FunctionCommands::Body(args) => args.options.project.clone(),
+            cli::FunctionCommands::SetBody(args) => args.project.clone(),
         },
         Commands::Strings(cmd) => match cmd {
             cli::StringsCommands::List(opts) => opts.project.clone(),
@@ -284,6 +287,9 @@ fn extract_program_from_command(command: &Commands) -> Option<String> {
             cli::FunctionCommands::SetReturnType(args) => args.program.clone(),
             cli::FunctionCommands::SetCallingConvention(args) => args.program.clone(),
             cli::FunctionCommands::SetVarType(args) => args.program.clone(),
+            cli::FunctionCommands::SetNoReturn(args) => args.program.clone(),
+            cli::FunctionCommands::Body(args) => args.options.program.clone(),
+            cli::FunctionCommands::SetBody(args) => args.program.clone(),
         },
         Commands::Strings(cmd) => match cmd {
             cli::StringsCommands::List(opts) => opts.program.clone(),
@@ -858,6 +864,26 @@ fn execute_via_bridge(
                         "type_name": args.type_name,
                     })),
                 ),
+                FunctionCommands::SetNoReturn(args) => client.send_command(
+                    "function_set_no_return",
+                    Some(json!({
+                        "target": args.resolved_target(),
+                        "no_return": args.no_return,
+                    })),
+                ),
+                FunctionCommands::Body(args) => client.send_command(
+                    "function_body",
+                    Some(json!({"target": args.resolved_target()})),
+                ),
+                FunctionCommands::SetBody(args) => client.send_command(
+                    "function_set_body",
+                    Some(json!({
+                        "target": args.resolved_target(),
+                        "start": args.start,
+                        "end": args.end,
+                        "action": args.action,
+                    })),
+                ),
             }
         }
         Commands::Strings(cmd) => {
@@ -1074,7 +1100,12 @@ fn execute_via_bridge(
                 ScriptCommands::List => client.script_list(),
             }
         }
-        Commands::Disasm(args) => client.disasm(args.resolved_target(), args.num_instructions),
+        Commands::Disasm(args) => client.disasm_range(
+            args.resolved_target(),
+            args.num_instructions,
+            args.end.as_deref(),
+            args.bytes,
+        ),
         Commands::Batch(args) => {
             // Read batch file and execute each command locally
             let content = std::fs::read_to_string(&args.script_file)
@@ -1640,6 +1671,8 @@ fn unwrap_bridge_response(value: serde_json::Value) -> Vec<serde_json::Value> {
         "current_program_name",
         "has_current_program",
         "data",
+        "start_address",
+        "end_address",
     ];
 
     // Special case: decompile responses have a "code" key - return as-is for special rendering

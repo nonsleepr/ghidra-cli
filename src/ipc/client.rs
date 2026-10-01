@@ -370,9 +370,24 @@ impl BridgeClient {
         address: &str,
         num_instructions: Option<usize>,
     ) -> Result<serde_json::Value> {
+        self.disasm_range(address, num_instructions, None, None)
+    }
+
+    pub fn disasm_range(
+        &self,
+        address: &str,
+        num_instructions: Option<usize>,
+        end: Option<&str>,
+        bytes: Option<usize>,
+    ) -> Result<serde_json::Value> {
         self.send_command(
             "disasm",
-            Some(json!({"address": address, "count": num_instructions})),
+            Some(json!({
+                "address": address,
+                "count": num_instructions,
+                "end": end,
+                "bytes": bytes,
+            })),
         )
     }
 

@@ -138,11 +138,46 @@ Decompile a function to C pseudocode.
 adds local variable details (name, type, storage).
 .B \-\-with\-params
 adds parameter details.
+If the decompiler completes with non-fatal warnings (e.g.\& partial type recovery, unreachable
+code), a
+.B warnings
+field is included; it is omitted entirely for a clean decompile.
 .TP
-.B disasm \fITARGET\fR [\fB\-n\fR \fIN\fR]
+.B disasm \fITARGET\fR [\fB\-n\fR \fIN\fR] [\fB\-\-end\fR \fIADDR\fR] [\fB\-\-bytes\fR \fIN\fR]
 Disassemble a function or
 .I N
 instructions starting at an address.
+.B \-\-end
+stops at (and includes) the instruction at the given address instead of using a fixed count.
+.B \-\-bytes
+stops once at least that many bytes have been consumed.
+.B \-\-end
+and
+.B \-\-bytes
+are mutually exclusive with each other and override
+.BR \-n .
+Each instruction's output includes resolved
+.B references
+(call/jump/data targets with symbol names when known), separate from the raw operand text.
+.TP
+.B function body \fITARGET\fR
+Show a function's body as a list of address ranges
+.RI ( min_address , " " max_address ", " length ).
+A function with more than one range has a disjoint/non-contiguous body — useful for spotting
+inlined exception-handling blocks merged into a function, or a body that doesn't cover what's
+expected.
+.TP
+.B function set\-body \fITARGET\fR \fB\-\-start\fR \fIADDR\fR \fB\-\-end\fR \fIADDR\fR [\fB\-\-action\fR \fIACTION\fR]
+Add or remove an address range from a function's body.
+.I ACTION
+is
+.B add
+or
+.BR remove ,
+defaulting to
+.BR add .
+Use with care: Ghidra's analyzers generally own body boundaries, and re-running analysis can
+undo manual edits.
 .TP
 .B strings list [\fIOPTIONS\fR]
 List defined strings.
@@ -275,6 +310,19 @@ Set calling convention (e.g.,
 .TP
 .B function set\-var\-type \fITARGET\fR \fB\-\-var\fR \fINAME\fR \fB\-\-type\fR \fITYPE\fR
 Retype a local variable in a decompiled function.
+.TP
+.B function set\-no\-return \fITARGET\fR [\fB\-\-no\-return\fR \fIBOOL\fR]
+Mark a function as non-returning (e.g.\& abort/assert/panic helpers), or clear the flag.
+.I BOOL
+is
+.B true
+or
+.BR false ,
+defaulting to
+.BR true .
+A helper incorrectly inferred as returning causes every call site after it to show misleading
+"falls through normally" pseudocode; correcting this usually fixes decompilation for all of its
+callers.
 .TP
 .B type list
 List all data types in the type manager.
@@ -501,6 +549,27 @@ Global symbol lookup.
 Full function scan (O(n)).
 .PP
 When a name is ambiguous or not found, the error message lists closest matches.
+.PP
+Addresses returned by commands (e.g.\&
+.BR address ", " entry_point ", " image_base )
+are in Ghidra's internal
+.RI < space >:< offset >
+form, e.g.\&
+.BR ram:00401000 .
+For a statically-linked or non-PIE ELF this
+.B ram:
+offset usually equals the binary's own virtual address (Ghidra's default image base is
+.B 0
+for such binaries); for a PIE/shared object, Ghidra applies its own image base on top of the
+ELF's load-relative addresses. Compare against the
+.B image_base
+field from
+.B program info
+when cross-referencing against
+.BR readelf (1)
+or
+.BR objdump (1)
+virtual addresses.
 .SH EXAMPLES
 .SS "First analysis of an unknown binary"
 .EX

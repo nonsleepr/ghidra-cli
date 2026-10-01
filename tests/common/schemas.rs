@@ -30,6 +30,8 @@ pub struct Function {
     pub decompiled: Option<String>,
     #[serde(default)]
     pub comment: Option<String>,
+    #[serde(default)]
+    pub no_return: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

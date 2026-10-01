@@ -1481,7 +1481,9 @@ fn test_program_close() {
         // (.gpr truncated to 0 bytes, .rep/idata emptied). Re-import to repair
         // before the next test auto-starts the bridge.
         let config = ghidra_cli::config::Config::load().expect("Failed to load config");
-        let projects_dir = config.get_project_dir().expect("Could not determine project dir");
+        let projects_dir = config
+            .get_project_dir()
+            .expect("Could not determine project dir");
         let gpr_file = projects_dir.join(format!("{}.gpr", TEST_PROJECT));
         let rep_dir = projects_dir.join(format!("{}.rep", TEST_PROJECT));
         let idata_dir = rep_dir.join("idata");
@@ -1508,8 +1510,10 @@ fn test_program_close() {
                 &[
                     "import",
                     binary.to_str().unwrap(),
-                    "--project", TEST_PROJECT,
-                    "--program", TEST_PROGRAM,
+                    "--project",
+                    TEST_PROJECT,
+                    "--program",
+                    TEST_PROGRAM,
                 ],
                 std::time::Duration::from_secs(600),
             );

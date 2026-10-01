@@ -327,6 +327,12 @@ pub enum FunctionCommands {
     SetCallingConvention(SetCallingConventionArgs),
     /// Set variable type in a function
     SetVarType(SetVarTypeArgs),
+    /// Set whether a function is marked as non-returning (e.g. abort/assert helpers)
+    SetNoReturn(SetNoReturnArgs),
+    /// Show a function's body as a list of address ranges (detects disjoint/non-contiguous bodies)
+    Body(FunctionGetArgs),
+    /// Add or remove an address range from a function's body
+    SetBody(SetBodyArgs),
 }
 
 #[derive(Args, Clone, Serialize, Deserialize, Debug)]
@@ -496,6 +502,64 @@ pub struct SetVarTypeArgs {
 }
 
 impl SetVarTypeArgs {
+    pub fn resolved_target(&self) -> &str {
+        self.target
+            .as_deref()
+            .or(self.positional_target.as_deref())
+            .expect("clap should ensure target is provided")
+    }
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct SetNoReturnArgs {
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(value_name = "TARGET", required_unless_present = "target")]
+    pub positional_target: Option<String>,
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(long = "target", value_name = "TARGET")]
+    pub target: Option<String>,
+    /// Mark as non-returning (true) or returning (false)
+    #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
+    pub no_return: bool,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+impl SetNoReturnArgs {
+    pub fn resolved_target(&self) -> &str {
+        self.target
+            .as_deref()
+            .or(self.positional_target.as_deref())
+            .expect("clap should ensure target is provided")
+    }
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct SetBodyArgs {
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(value_name = "TARGET", required_unless_present = "target")]
+    pub positional_target: Option<String>,
+    /// Function target (name | 0xaddr | FUN_<hex>)
+    #[arg(long = "target", value_name = "TARGET")]
+    pub target: Option<String>,
+    /// Start address of the range to add/remove (inclusive)
+    #[arg(long)]
+    pub start: String,
+    /// End address of the range to add/remove (inclusive)
+    #[arg(long)]
+    pub end: String,
+    /// "add" to extend the body, "remove" to shrink it (default: add)
+    #[arg(long, default_value = "add")]
+    pub action: String,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+impl SetBodyArgs {
     pub fn resolved_target(&self) -> &str {
         self.target
             .as_deref()
@@ -1060,9 +1124,15 @@ pub struct DisasmArgs {
     /// Disassembly target (name | 0xaddr | FUN_<hex>)
     #[arg(long = "target", value_name = "TARGET")]
     pub target: Option<String>,
-    /// Number of instructions to disassemble
+    /// Number of instructions to disassemble (default 10 if no --end/--bytes given)
     #[arg(long = "instructions", short = 'n')]
     pub num_instructions: Option<usize>,
+    /// Stop disassembling once this address is reached (inclusive). Overrides --instructions.
+    #[arg(long, conflicts_with = "bytes")]
+    pub end: Option<String>,
+    /// Stop disassembling once at least this many bytes have been consumed. Overrides --instructions.
+    #[arg(long, conflicts_with = "end")]
+    pub bytes: Option<usize>,
     #[command(flatten)]
     pub options: QueryOptions,
 }

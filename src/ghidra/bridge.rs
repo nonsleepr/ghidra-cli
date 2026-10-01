@@ -364,8 +364,7 @@ pub fn start_bridge(
         })
     };
     #[cfg(target_os = "windows")]
-    let stderr_handle: std::thread::JoinHandle<Vec<String>> =
-        std::thread::spawn(|| Vec::new());
+    let stderr_handle: std::thread::JoinHandle<Vec<String>> = std::thread::spawn(|| Vec::new());
 
     // Wait for bridge to become ready.
     //

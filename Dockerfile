@@ -11,12 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Cache dependency compilation separately from source changes.
-COPY Cargo.toml Cargo.lock build.rs ./
-COPY docs ./docs
-RUN mkdir -p src/bin .claude/skills/ghidra-cli \
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src/bin \
     && echo "fn main() {}" > src/main.rs \
     && echo "" > src/lib.rs \
-    && touch .claude/skills/ghidra-cli/SKILL.fallback.md \
     && cargo build --release --locked \
     && rm -rf src
 

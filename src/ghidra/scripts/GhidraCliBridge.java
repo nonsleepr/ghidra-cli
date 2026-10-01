@@ -254,6 +254,9 @@ public class GhidraCliBridge extends GhidraScript {
             case "function_set_signature": return handleFunctionSetSignature(args);
             case "function_set_return_type": return handleFunctionSetReturnType(args);
             case "function_set_calling_convention": return handleFunctionSetCallingConvention(args);
+            case "function_set_no_return": return handleFunctionSetNoReturn(args);
+            case "function_body":   return handleFunctionBody(args);
+            case "function_set_body": return handleFunctionSetBody(args);
             case "set_var_type":    return handleSetVarType(args);
             // Bookmark commands
             case "bookmark_list":    return handleBookmarkList(args);
@@ -488,34 +491,7 @@ public class GhidraCliBridge extends GhidraScript {
                 continue;
             }
 
-            JsonObject funcData = new JsonObject();
-            funcData.addProperty("name", name);
-            funcData.addProperty("address", func.getEntryPoint().toString());
-            funcData.addProperty("size", func.getBody().getNumAddresses());
-            funcData.addProperty("entry_point", func.getEntryPoint().toString());
-
-            String sig = null;
-            try {
-                sig = func.getPrototypeString(false, false);
-            } catch (Exception e) {
-                // ignore
-            }
-            if (sig != null) {
-                funcData.addProperty("signature", sig);
-            } else {
-                funcData.add("signature", JsonNull.INSTANCE);
-            }
-
-            funcData.addProperty("calling_convention", func.getCallingConventionName());
-
-            String comment = func.getComment();
-            if (comment != null) {
-                funcData.addProperty("comment", comment);
-            } else {
-                funcData.add("comment", JsonNull.INSTANCE);
-            }
-
-            functions.add(funcData);
+            functions.add(functionToJson(func));
             count++;
         }
 
@@ -545,6 +521,7 @@ public class GhidraCliBridge extends GhidraScript {
         }
 
         funcData.addProperty("calling_convention", func.getCallingConventionName());
+        funcData.addProperty("no_return", func.hasNoReturn());
 
         String comment = func.getComment();
         if (comment != null) {
@@ -807,6 +784,14 @@ public class GhidraCliBridge extends GhidraScript {
                     result.add("signature", JsonNull.INSTANCE);
                 }
                 result.addProperty("code", code);
+
+                // Decompilation can "complete" while still reporting non-fatal warnings
+                // (e.g. partial type recovery, unreachable code, bad data flow). Surface
+                // these so callers can tell a clean decompile from a suspect one.
+                String warningMsg = results.getErrorMessage();
+                if (warningMsg != null && !warningMsg.isEmpty()) {
+                    result.addProperty("warnings", warningMsg);
+                }
 
                 boolean withVars = getArgBool(args, "with_vars", false);
                 boolean withParams = getArgBool(args, "with_params", false);
@@ -2739,6 +2724,134 @@ public class GhidraCliBridge extends GhidraScript {
         }
     }
 
+    private JsonObject handleFunctionSetNoReturn(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String target = getArgString(args, "target");
+        if (target == null || target.isEmpty())
+            return errorResult("target required");
+        boolean noReturn = getArgBool(args, "no_return", true);
+
+        try {
+            Function func = findFunctionByNameOrAddress(target);
+            if (func == null) return errorResult(buildFunctionTargetHint(target));
+
+            int txId = currentProgram.startTransaction("Set function no-return");
+            try {
+                func.setNoReturn(noReturn);
+                currentProgram.endTransaction(txId, true);
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "no_return_set");
+            result.addProperty("function", func.getName());
+            result.addProperty("no_return", func.hasNoReturn());
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to set no-return: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Returns a function's body as a list of disjoint address ranges. Useful for detecting
+     * cases where Ghidra has merged inlined exception-handling blocks (or other non-contiguous
+     * code) into a function, or where a function's body doesn't cover everything expected.
+     */
+    private JsonObject handleFunctionBody(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String target = getArgString(args, "target");
+        if (target == null || target.isEmpty())
+            return errorResult("target required");
+
+        try {
+            Function func = findFunctionByNameOrAddress(target);
+            if (func == null) return errorResult(buildFunctionTargetHint(target));
+
+            ghidra.program.model.address.AddressSetView body = func.getBody();
+            JsonArray ranges = new JsonArray();
+            ghidra.program.model.address.AddressRangeIterator rangeIter = body.getAddressRanges();
+            while (rangeIter.hasNext()) {
+                ghidra.program.model.address.AddressRange range = rangeIter.next();
+                JsonObject rangeData = new JsonObject();
+                rangeData.addProperty("min_address", range.getMinAddress().toString());
+                rangeData.addProperty("max_address", range.getMaxAddress().toString());
+                rangeData.addProperty("length", range.getLength());
+                ranges.add(rangeData);
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("function", func.getName());
+            result.addProperty("entry_point", func.getEntryPoint().toString());
+            result.add("ranges", ranges);
+            result.addProperty("range_count", ranges.size());
+            result.addProperty("total_size", body.getNumAddresses());
+            result.addProperty("is_contiguous", ranges.size() <= 1);
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to get function body: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Adds or removes an address range from a function's body. Use with care: Ghidra's analyzers
+     * generally own body boundaries, and manual edits can be undone by re-running analysis.
+     */
+    private JsonObject handleFunctionSetBody(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        String target = getArgString(args, "target");
+        String startStr = getArgString(args, "start");
+        String endStr = getArgString(args, "end");
+        String action = getArgString(args, "action");
+        if (action == null || action.isEmpty()) action = "add";
+        if (target == null || target.isEmpty())
+            return errorResult("target required");
+        if (startStr == null || startStr.isEmpty() || endStr == null || endStr.isEmpty())
+            return errorResult("start and end addresses required");
+
+        try {
+            Function func = findFunctionByNameOrAddress(target);
+            if (func == null) return errorResult(buildFunctionTargetHint(target));
+
+            Address startAddr = resolveAddress(startStr);
+            Address endAddr = resolveAddress(endStr);
+            if (startAddr == null) return errorResult("Invalid start address: " + startStr);
+            if (endAddr == null) return errorResult("Invalid end address: " + endStr);
+
+            ghidra.program.model.address.AddressSet newBody =
+                new ghidra.program.model.address.AddressSet(func.getBody());
+            ghidra.program.model.address.AddressSet rangeSet =
+                new ghidra.program.model.address.AddressSet(startAddr, endAddr);
+
+            if ("remove".equalsIgnoreCase(action)) {
+                newBody.delete(rangeSet);
+            } else if ("add".equalsIgnoreCase(action)) {
+                newBody.add(rangeSet);
+            } else {
+                return errorResult("Invalid action '" + action + "' (expected 'add' or 'remove')");
+            }
+
+            int txId = currentProgram.startTransaction("Set function body");
+            try {
+                func.setBody(newBody);
+                currentProgram.endTransaction(txId, true);
+            } catch (Exception e) {
+                currentProgram.endTransaction(txId, false);
+                throw e;
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "body_set");
+            result.addProperty("function", func.getName());
+            result.addProperty("action", action);
+            result.addProperty("total_size", func.getBody().getNumAddresses());
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to set function body: " + e.getMessage());
+        }
+    }
+
     private JsonObject handleSetVarType(JsonObject args) {
         if (currentProgram == null) return errorResult("No program loaded");
         String funcTarget = getArgString(args, "function");
@@ -3879,7 +3992,12 @@ public class GhidraCliBridge extends GhidraScript {
         if (currentProgram == null) return errorResult("No program loaded");
 
         String addressStr = getArgString(args, "address");
-        int count = getArgInt(args, "count", 10);
+        String endStr = getArgString(args, "end");
+        Integer maxBytes = args != null && args.has("bytes") && !args.get("bytes").isJsonNull()
+            ? args.get("bytes").getAsInt() : null;
+        // Count only applies as a bound when neither --end nor --bytes is given.
+        boolean hasBoundedRange = endStr != null || maxBytes != null;
+        int count = getArgInt(args, "count", hasBoundedRange ? Integer.MAX_VALUE : 10);
 
         if (addressStr == null || addressStr.isEmpty()) {
             return errorResult("Address required");
@@ -3889,6 +4007,12 @@ public class GhidraCliBridge extends GhidraScript {
             // Use resolveAddress which handles 0x prefix and symbol lookup
             Address addr = resolveAddress(addressStr);
             if (addr == null) return errorResult("Invalid address: " + addressStr);
+
+            Address endAddr = null;
+            if (endStr != null && !endStr.isEmpty()) {
+                endAddr = resolveAddress(endStr);
+                if (endAddr == null) return errorResult("Invalid end address: " + endStr);
+            }
 
             Listing listing = currentProgram.getListing();
             Instruction instruction = listing.getInstructionAt(addr);
@@ -3913,14 +4037,24 @@ public class GhidraCliBridge extends GhidraScript {
 
             JsonArray results = new JsonArray();
             Instruction current = instruction;
+            ReferenceManager refMgr = currentProgram.getReferenceManager();
+            FunctionManager fm = currentProgram.getFunctionManager();
+            SymbolTable symbolTable = currentProgram.getSymbolTable();
+            int bytesConsumed = 0;
 
             for (int i = 0; i < count && current != null; i++) {
                 Address instrAddr = current.getAddress();
+
+                // Bound check: stop once we've passed the requested end address or byte budget.
+                if (endAddr != null && instrAddr.compareTo(endAddr) > 0) break;
+
                 byte[] byteArray = current.getBytes();
                 StringBuilder bytesHex = new StringBuilder();
                 for (byte b : byteArray) {
                     bytesHex.append(String.format("%02x", b & 0xff));
                 }
+
+                if (maxBytes != null && bytesConsumed >= maxBytes) break;
 
                 String mnemonic = current.getMnemonicString();
                 JsonArray operands = new JsonArray();
@@ -3929,19 +4063,47 @@ public class GhidraCliBridge extends GhidraScript {
                     operands.add(new JsonPrimitive(current.getDefaultOperandRepresentation(j)));
                 }
 
+                // Resolve any symbol(s) this instruction references (call/jump targets,
+                // data references), distinct from the raw operand text Ghidra renders.
+                JsonArray references = new JsonArray();
+                for (Reference ref : refMgr.getReferencesFrom(instrAddr)) {
+                    Address toAddr = ref.getToAddress();
+                    JsonObject refData = new JsonObject();
+                    refData.addProperty("to_address", toAddr.toString());
+                    refData.addProperty("ref_type", ref.getReferenceType().toString());
+                    Function toFunc = fm.getFunctionAt(toAddr);
+                    Symbol sym = symbolTable.getPrimarySymbol(toAddr);
+                    if (toFunc != null) {
+                        refData.addProperty("symbol", toFunc.getName());
+                    } else if (sym != null) {
+                        refData.addProperty("symbol", sym.getName());
+                    } else {
+                        refData.add("symbol", JsonNull.INSTANCE);
+                    }
+                    references.add(refData);
+                }
+
                 JsonObject instrData = new JsonObject();
                 instrData.addProperty("address", instrAddr.toString());
                 instrData.addProperty("bytes", bytesHex.toString());
                 instrData.addProperty("mnemonic", mnemonic);
                 instrData.add("operands", operands);
+                instrData.add("references", references);
                 results.add(instrData);
 
+                bytesConsumed += byteArray.length;
                 current = current.getNext();
             }
 
             JsonObject result = new JsonObject();
             result.add("instructions", results);
             result.addProperty("count", results.size());
+            if (results.size() > 0) {
+                result.addProperty("start_address",
+                    results.get(0).getAsJsonObject().get("address").getAsString());
+                result.addProperty("end_address",
+                    results.get(results.size() - 1).getAsJsonObject().get("address").getAsString());
+            }
             return result;
         } catch (Exception e) {
             return errorResult("Failed to disassemble: " + e.getMessage());
