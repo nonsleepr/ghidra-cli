@@ -5,6 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A command failed after collecting structured diagnostics.
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct BridgeCommandError {
+    pub message: String,
+    pub data: serde_json::Value,
+}
+
 /// Request to the Java bridge.
 #[derive(Debug, Serialize)]
 pub struct BridgeRequest {

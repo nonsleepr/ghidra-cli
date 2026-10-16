@@ -59,6 +59,7 @@ fn main() {
         .with(stdout_layer)
         .init();
 
+    let failure_format = command_output_format(&cli).unwrap_or(OutputFormat::Compact);
     let result = match &cli.command {
         Commands::Setup(_) => {
             // Setup needs async for downloading
@@ -77,6 +78,15 @@ fn main() {
     };
 
     if let Err(e) = result {
+        if let Some(failure) = e.downcast_ref::<ipc::protocol::BridgeCommandError>() {
+            if failure_format != OutputFormat::Count {
+                let mut data = failure.data.clone();
+                data["status"] = serde_json::json!("error");
+                if let Ok(output) = DefaultFormatter.format(&[data], failure_format) {
+                    print!("{}", output);
+                }
+            }
+        }
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
@@ -738,19 +748,7 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
 
     // Determine output format: explicit -o flag > --json > TTY detection
     let opts = extract_query_options(&cli.command);
-    let explicit_format = opts
-        .as_ref()
-        .and_then(|o| o.format.as_ref())
-        .map(|f| OutputFormat::from_str(f))
-        .transpose()?;
-
-    let format = if let Some(fmt) = explicit_format {
-        fmt
-    } else if cli.json || opts.as_ref().is_some_and(|o| o.json) {
-        OutputFormat::Json
-    } else {
-        auto_detect_format(std::io::stdout().is_terminal())
-    };
+    let format = command_output_format(&cli)?;
 
     // Unwrap bridge response envelopes before formatting
     let values = unwrap_bridge_response(result);
@@ -772,6 +770,18 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
         println!("{}", output);
     }
     Ok(())
+}
+
+fn command_output_format(cli: &Cli) -> anyhow::Result<OutputFormat> {
+    let opts = extract_query_options(&cli.command);
+    if let Some(format) = opts.as_ref().and_then(|o| o.format.as_ref()) {
+        return Ok(OutputFormat::from_str(format)?);
+    }
+    Ok(if cli.json || opts.as_ref().is_some_and(|o| o.json) {
+        OutputFormat::Json
+    } else {
+        auto_detect_format(std::io::stdout().is_terminal())
+    })
 }
 
 fn is_unknown_command_error(err: &anyhow::Error) -> bool {

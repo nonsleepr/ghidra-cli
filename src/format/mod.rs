@@ -63,15 +63,22 @@ fn format_compact<T: Serialize>(data: &[T]) -> Result<String> {
     for item in &json_data {
         match item {
             JsonValue::Object(map) => {
-                // Special case: decompile response with "code" key
-                if let Some(code) = map.get("code").and_then(|v| v.as_str()) {
+                // Both successful and failed decompilation carry evidence, even without C code.
+                if map.contains_key("code") || map.contains_key("diagnostics") {
+                    if let Some(diagnostics) = map.get("diagnostics") {
+                        format_decompile_diagnostics(&mut result, diagnostics);
+                    } else if let Some(warnings) = map.get("warnings").and_then(|v| v.as_str()) {
+                        result.push_str(&format!("Decompiler message: {warnings}\n"));
+                    }
                     if let Some(sig) = map.get("signature").and_then(|v| v.as_str()) {
                         result.push_str(sig);
                         result.push('\n');
                     }
-                    result.push_str(code);
-                    if !code.ends_with('\n') {
-                        result.push('\n');
+                    if let Some(code) = map.get("code").and_then(|v| v.as_str()) {
+                        result.push_str(code);
+                        if !code.ends_with('\n') {
+                            result.push('\n');
+                        }
                     }
                     continue;
                 }
@@ -191,6 +198,79 @@ fn format_compact<T: Serialize>(data: &[T]) -> Result<String> {
     Ok(result)
 }
 
+fn format_decompile_diagnostics(output: &mut String, diagnostics: &JsonValue) {
+    let text = |v: &JsonValue| format_json_value(v);
+    let decompiler = &diagnostics["decompiler"];
+    output.push_str(&format!(
+        "Decompiler: {}; semantic completeness: not established\n",
+        text(&decompiler["status"])
+    ));
+    if let Some(message) = decompiler["raw_message"].as_str().filter(|s| !s.is_empty()) {
+        output.push_str(&format!("Decompiler message: {message}\n"));
+    }
+    if let Some(comments) = decompiler["warning_comments"].as_array() {
+        for comment in comments {
+            output.push_str(&format!("Warning comment: {}\n", text(comment)));
+        }
+    }
+    let database = &diagnostics["database"];
+    output.push_str(&format!(
+        "Database: {} [source={}, convention={}, custom storage={}, no-return={}, varargs={}]\n",
+        text(&database["signature"]),
+        text(&database["signature_source"]),
+        text(&database["calling_convention"]),
+        text(&database["custom_variable_storage"]),
+        text(&database["no_return"]),
+        text(&database["varargs"])
+    ));
+    for (label, model) in [
+        ("Saved", database),
+        ("Recovered", &diagnostics["recovered"]),
+    ] {
+        if let Some(parameters) = model["parameters"].as_array() {
+            output.push_str(&format!("{label} parameters: {}\n", parameters.len()));
+            for parameter in parameters {
+                let provenance = if label == "Saved" {
+                    format!("source={}", text(&parameter["source"]))
+                } else {
+                    format!(
+                        "name locked={}, type locked={}",
+                        text(&parameter["name_locked"]),
+                        text(&parameter["type_locked"])
+                    )
+                };
+                output.push_str(&format!(
+                    "  {} {} @ {} [{provenance}]\n",
+                    text(&parameter["type"]),
+                    text(&parameter["name"]),
+                    text(&parameter["storage"])
+                ));
+            }
+        }
+    }
+    let body = &diagnostics["body"];
+    output.push_str(&format!(
+        "Body: {} ranges, {} bytes, contiguous={}\n",
+        text(&body["range_count"]),
+        text(&body["total_size"]),
+        text(&body["is_contiguous"])
+    ));
+    if let Some(ranges) = body["ranges"].as_array() {
+        for range in ranges {
+            output.push_str(&format!(
+                "  {}..{}\n",
+                text(&range["min_address"]),
+                text(&range["max_address"])
+            ));
+        }
+    }
+    if let Some(hints) = diagnostics["inspection_hints"].as_object() {
+        output.push_str("Inspect (same project/program): ");
+        output.push_str(&hints.values().map(text).collect::<Vec<_>>().join("; "));
+        output.push('\n');
+    }
+}
+
 fn format_json_value(value: &JsonValue) -> String {
     match value {
         JsonValue::Null => "null".to_string(),
@@ -252,6 +332,35 @@ mod tests {
             .unwrap();
         assert_eq!(output.lines().count(), 1);
         assert!(output.contains(r#"; "line\n\"quoted\" café""#));
+    }
+
+    #[test]
+    fn compact_decompile_keeps_raw_messages_and_legacy_warnings() {
+        let warning = "WARNING: incomplete recovery\nraw second line";
+        let legacy = serde_json::json!({"code":"int f(void) { return 0; }", "warnings":warning});
+        let output = DefaultFormatter
+            .format(&[legacy], OutputFormat::Compact)
+            .unwrap();
+        assert!(output.contains(warning));
+        assert!(output.contains("int f(void)"));
+        let value = serde_json::json!({"code":"int f(void) { return 0; }", "diagnostics":{
+            "decompiler":{"status":"completed","raw_message":warning},
+            "database":{"signature":"int f(void)","parameters":[]},
+            "recovered":{"parameters":[{"name":"value","type":"int","storage":"EDI:4",
+                "name_locked":true,"type_locked":true}]},
+            "body":{"range_count":2,"total_size":3,"is_contiguous":false,
+                "ranges":[{"min_address":"00401000","max_address":"00401001"},
+                          {"min_address":"00401008","max_address":"00401008"}]}
+        }});
+        let output = DefaultFormatter
+            .format(&[value], OutputFormat::Compact)
+            .unwrap();
+        assert!(output.contains(warning));
+        assert!(output.contains("contiguous=false"));
+        assert!(output.contains("00401008..00401008"));
+        assert!(output.contains("int value @ EDI:4"));
+        assert!(output.contains("type locked=true"));
+        assert!(output.contains("semantic completeness: not established"));
     }
 
     #[test]

@@ -841,3 +841,15 @@ slots, decode failures, offcut targets and non-call flow outside the window fail
 and roll back all changes. Additional limits: 65536 instructions and 30 seconds.
 No analyzer runs. Returns actual body ranges and new/reused instruction counts;
 the requested window and unwind candidates are not authoritative function bodies.
+.SH DECOMPILATION DIAGNOSTICS
+.B decompile
+and
+.B function decompile
+include completion/process status, raw messages and rendered WARNING comments,
+saved prototype and parameter storage/source, recovered parameter locks,
+actual function body ranges and inspection hints.
+Completion and absence of warnings do not establish semantic completeness.
+JSON exposes these under diagnostics; compact output displays the evidence
+before the unchanged C code.
+Failed decompiler attempts retain diagnostics while exiting nonzero.
+See docs/diagnostics.md for the schema and coverage limits.

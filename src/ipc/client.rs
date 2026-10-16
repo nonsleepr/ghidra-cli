@@ -65,6 +65,13 @@ impl BridgeClient {
                 let msg = response
                     .message
                     .unwrap_or_else(|| "Unknown error".to_string());
+                if let Some(data) = response.data {
+                    if data.get("diagnostics").is_some() {
+                        return Err(
+                            super::protocol::BridgeCommandError { message: msg, data }.into()
+                        );
+                    }
+                }
                 anyhow::bail!("{}", msg)
             }
             "shutdown" => Ok(json!({"status": "shutdown"})),
@@ -111,7 +118,7 @@ impl BridgeClient {
         with_params: bool,
     ) -> Result<serde_json::Value> {
         self.send_command(
-            "decompile",
+            "decompile_v2",
             Some(json!({
                 "address": address,
                 "with_vars": with_vars,

@@ -696,3 +696,155 @@ fn preparation_reports_actual_ranges_skips_callees_and_reuses_instructions() {
     assert_eq!(looping["total_size"], 2);
     assert_eq!(looping["new_instruction_count"], 1);
 }
+
+#[test]
+#[serial_test::serial]
+fn decompile_diagnostics_distinguish_saved_prototypes_and_split_bodies() {
+    let p = Probe::new();
+    // caller: mov edi,42; call callee; jmp cold; callee: mov eax,edi; ret;
+    // cold: add eax,1; ret. No compiler/analyzer heuristics are involved.
+    p.java("setBytes(toAddr(0x401010L), new byte[]{(byte)0xbf,42,0,0,0,(byte)0xe8,6,0,0,0,(byte)0xeb,0x14}); setBytes(toAddr(0x401020L), new byte[]{(byte)0x89,(byte)0xf8,(byte)0xc3}); setBytes(toAddr(0x401030L), new byte[]{(byte)0x83,(byte)0xc0,1,(byte)0xc3});");
+    p.ok(&[
+        "function",
+        "prepare",
+        "0x401010",
+        "split_caller",
+        "--max-bytes",
+        "36",
+    ]);
+    p.ok(&[
+        "function",
+        "prepare",
+        "0x401020",
+        "suspect_callee",
+        "--max-bytes",
+        "3",
+    ]);
+    p.ok(&[
+        "function",
+        "set-signature",
+        "split_caller",
+        "--signature",
+        "int split_caller(void)",
+    ]);
+    p.ok(&[
+        "function",
+        "set-signature",
+        "suspect_callee",
+        "--signature",
+        "int suspect_callee(void)",
+    ]);
+    let before = p.unchanged_marker();
+    let wrong = p.ok(&["decompile", "split_caller"]);
+    let diagnostics = &wrong["diagnostics"];
+    assert_eq!(diagnostics["decompiler"]["completed"], true);
+    assert_eq!(diagnostics["decompiler"]["code_available"], true);
+    // Ghidra puts this warning in C markup even when getErrorMessage() is empty.
+    assert_eq!(diagnostics["decompiler"]["raw_message"], "");
+    assert!(diagnostics["decompiler"]["warning_comments"]
+        .to_string()
+        .contains("Unknown calling convention"));
+    assert_eq!(diagnostics["semantic_completeness"], "not_established");
+    assert_eq!(
+        diagnostics["body"]["ranges"],
+        p.ok(&["function", "body", "split_caller"])["ranges"]
+    );
+    assert_eq!(diagnostics["body"]["range_count"], 2);
+    assert_eq!(diagnostics["body"]["total_size"], 16);
+    assert_eq!(diagnostics["body"]["is_contiguous"], false);
+    assert!(wrong["code"].as_str().unwrap().contains("suspect_callee()"));
+    assert_eq!(
+        p.unchanged_marker(),
+        before,
+        "diagnostics must not persist recovered metadata"
+    );
+    let alias = p.ok(&[
+        "function",
+        "decompile",
+        "split_caller",
+        "--with-params",
+        "--with-vars",
+    ]);
+    assert_eq!(alias["diagnostics"], *diagnostics);
+    let calls = p.ok(&["function", "calls", "split_caller"]);
+    assert!(calls.to_string().contains("suspect_callee"));
+    let saved = p.ok(&["function", "get", "suspect_callee"]);
+    assert!(saved["signature"].as_str().unwrap().contains("void"));
+    // Correcting a known wrong database prototype changes rendered arguments;
+    // completion alone did not expose that error.
+    p.ok(&[
+        "function",
+        "set-signature",
+        "suspect_callee",
+        "--signature",
+        "int suspect_callee(int value)",
+    ]);
+    let corrected = p.ok(&["decompile", "split_caller"]);
+    assert!(!corrected["code"]
+        .as_str()
+        .unwrap()
+        .contains("suspect_callee()"));
+    let callee = p.ok(&["decompile", "suspect_callee", "--with-params"]);
+    assert_eq!(
+        callee["diagnostics"]["database"]["parameters"][0]["name"],
+        "value"
+    );
+    assert_eq!(
+        callee["diagnostics"]["recovered"]["parameters"][0]["type_locked"],
+        true
+    );
+    p.java("ghidra.program.model.listing.Function f = getFunctionAt(toAddr(0x401020L)); f.setCustomVariableStorage(true); f.setNoReturn(true); f.setVarArgs(true);");
+    let flagged = p.ok(&["decompile", "suspect_callee"]);
+    assert_eq!(
+        flagged["diagnostics"]["database"]["custom_variable_storage"],
+        true
+    );
+    assert_eq!(flagged["diagnostics"]["database"]["no_return"], true);
+    assert_eq!(flagged["diagnostics"]["database"]["varargs"], true);
+    assert_eq!(
+        flagged["diagnostics"]["database"]["parameters"][0]["source"],
+        "USER_DEFINED"
+    );
+    let compact = p.run(&["function", "decompile", "split_caller", "-o", "compact"]);
+    assert!(compact.status.success());
+    let compact = String::from_utf8(compact.stdout).unwrap();
+    assert!(compact.contains("semantic completeness: not established"));
+    assert!(compact.contains("contiguous=false"));
+    assert!(compact.contains("Warning comment:"));
+    assert!(compact.contains("function calls 00401010"));
+    p.stop();
+    assert_eq!(
+        p.ok(&["decompile", "split_caller"])["diagnostics"]["database"],
+        corrected["diagnostics"]["database"]
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn external_decompile_failure_retains_ghidra_diagnostics() {
+    let p = Probe::new();
+    let address = p.java("println(currentProgram.getExternalManager().addExtFunction(\"DIAGNOSTIC_FIXTURE\", \"external_probe\", null, ghidra.program.model.symbol.SourceType.USER_DEFINED).getFunction().getEntryPoint().toString());");
+    let before = p.unchanged_marker();
+    let output = p.run(&["decompile", &address]);
+    assert!(
+        !output.status.success(),
+        "unexpected success: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+        panic!(
+            "{e}: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    assert_eq!(result["status"], "error");
+    assert_eq!(result["diagnostics"]["decompiler"]["completed"], false);
+    assert_eq!(result["diagnostics"]["decompiler"]["code_available"], false);
+    assert!(result["diagnostics"]["decompiler"]["raw_message"]
+        .as_str()
+        .unwrap()
+        .contains("EXTERNAL"));
+    assert!(result["diagnostics"]["recovered"].is_null());
+    assert_eq!(p.unchanged_marker(), before);
+}

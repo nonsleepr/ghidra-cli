@@ -1,4 +1,4 @@
-# Build and bridge diagnostics
+# Build, bridge and decompilation diagnostics
 
 Use explicit JSON output to capture each side of a report:
 
@@ -58,3 +58,74 @@ reopen. A synthetic stripped ELF reproduces the missing-instruction creation
 failure, and now verifies bounded preparation, two-pointer signature readback,
 decompilation and stop/reopen with unknown calling convention/custom storage.
 The historical investigation's signature discrepancy remains unreproduced.
+
+## Decompilation evidence
+
+`decompile TARGET` and `function decompile TARGET` return the same `diagnostics`
+object alongside the existing `code`, `signature`, optional `warnings`, `params`
+and `variables` fields. It is included by default; `--with-params` and
+`--with-vars` retain their existing recovered-symbol output. Use `--json` for
+structured output, or `-o compact` for a readable diagnostic summary followed
+by the C code.
+
+- `decompiler`: `status` (`completed`, `failed` or `open_failed`), `completed`,
+  `code_available`, `timed_out`, `cancelled`, `failed_to_start`, the unmodified
+  `raw_message` from `DecompileResults.getErrorMessage()`, `warning_comments`
+  and `timeout_seconds`. Flags requiring a result are null if opening the
+  program failed. Raw messages preserve null, empty strings and whitespace.
+- `warning_comments` contains rendered C comment blocks beginning with
+  `WARNING:` at a line's start (allowing indentation). Ghidra can emit these
+  while `raw_message` is empty. These matching comments can include user
+  comments; this field is neither an exhaustive warning inventory nor proof
+  of who authored a comment. The original C code remains unchanged. The legacy
+  top-level `warnings` still contains only a nonempty raw message.
+- `database`: the saved prototype, signature source, calling convention,
+  custom-variable-storage, no-return and varargs flags, return value, and saved
+  parameters with ordinal, name, type, storage, source, auto-parameter and
+  forced-indirect flags. Parameter `source` is Ghidra `Variable.getSource()`
+  (symbol/name provenance), not separate proof of the datatype's origin.
+- `recovered`: the decompiler's calling convention, return type/storage,
+  no-return and varargs flags, plus recovered parameters with storage and
+  name/type locks. Null means no high function was available. Recovery and
+  locks describe Ghidra's model; neither certifies a correct ABI or prototype.
+- `body`: actual saved inclusive ranges, range count, byte count and contiguity,
+  matching `function body`. A split/cold body is retained as multiple ranges.
+- `inspection_hints`: command fragments to inspect the same function, body,
+  calls and disassembly. Run them with the same `--project`/`--program` context.
+- `semantic_completeness` is always `not_established`. Completion or absence
+  of warnings never establishes that all arguments, paths or semantics were
+  recovered correctly.
+
+Compact output includes the raw message, matching warning comments, saved and
+recovered parameter storage/provenance, body ranges and inspection hints.
+`-o count` remains a count of successful result objects, without diagnostics.
+Explicit query field selection can project diagnostics out of successful JSON.
+
+When Ghidra returns a failed decompiler result or cannot open the program,
+JSON output includes `status: error`, `error`, name/address and diagnostics;
+compact output shows the available evidence. The CLI still exits nonzero and
+prints the failure reason to stderr. Failure in count mode emits no count.
+Errors before a decompiler attempt, such as a missing target function, retain
+the existing stderr-only behavior. This does not turn failures into successful
+empty decompilations.
+
+For suspicious omitted arguments, inspect the caller's call sites, then the
+callee's saved prototype and recovered storage:
+
+```sh
+ghidra-cli decompile CALLER --project PROJECT --program PROGRAM --json
+ghidra-cli function calls CALLER --project PROJECT --program PROGRAM
+ghidra-cli function get CALLEE --project PROJECT --program PROGRAM
+ghidra-cli decompile CALLEE --project PROJECT --program PROGRAM --json
+ghidra-cli function body CALLER --project PROJECT --program PROGRAM
+```
+
+A synthetic x86-64 fixture demonstrates a completed split-body caller rendering
+`callee()` under an intentionally wrong saved `int callee(void)` prototype.
+Correcting the known prototype to `int callee(int value)` reveals the existing
+constant argument. These commands report the current evidence and do not
+silently edit prototypes, expand bodies or commit recovered parameters.
+
+The new client uses `decompile_v2`, so an older bridge refreshes through the
+existing single unknown-command retry instead of silently omitting diagnostics.
+Legacy clients can still use the original `decompile` RPC against the new bridge.

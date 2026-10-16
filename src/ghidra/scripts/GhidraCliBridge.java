@@ -196,7 +196,9 @@ public class GhidraCliBridge extends GhidraScript {
 
             // Check if the handler returned an error
             if (result.has("error")) {
-                return new HandleResult(errorResponse(result.get("error").getAsString()), false);
+                JsonObject response = errorResponse(result.get("error").getAsString());
+                if (result.has("diagnostics")) response.add("data", result);
+                return new HandleResult(response, false);
             }
 
             return new HandleResult(successResponse(result), false);
@@ -217,7 +219,8 @@ public class GhidraCliBridge extends GhidraScript {
             case "create_function": return handleCreateFunction(args);
             case "function_prepare": return handlePrepareFunction(args);
             case "delete_function": return handleDeleteFunction(args);
-            case "decompile":       return handleDecompile(args);
+            case "decompile":
+            case "decompile_v2":    return handleDecompile(args);
             case "list_strings":    return handleListStrings(args);
             case "list_imports":    return handleListImports(args);
             case "list_exports":    return handleListExports(args);
@@ -907,6 +910,117 @@ public class GhidraCliBridge extends GhidraScript {
         }
     }
 
+    // Database metadata is deliberately separate from the decompiler's recovered model.
+    private JsonObject databaseParameterJson(Parameter parameter) {
+        JsonObject result = new JsonObject();
+        result.addProperty("ordinal", parameter.getOrdinal());
+        result.addProperty("name", parameter.getName());
+        result.addProperty("type", parameter.getDataType().getDisplayName());
+        result.addProperty("storage", parameter.getVariableStorage().toString());
+        result.addProperty("source", parameter.getSource().toString());
+        result.addProperty("auto_parameter", parameter.isAutoParameter());
+        result.addProperty("forced_indirect", parameter.isForcedIndirect());
+        return result;
+    }
+
+    private JsonObject recoveredParameterJson(ghidra.program.model.pcode.HighSymbol symbol) {
+        JsonObject result = new JsonObject();
+        result.addProperty("ordinal", symbol.getCategoryIndex());
+        result.addProperty("name", symbol.getName());
+        result.addProperty("type", symbol.getDataType().getDisplayName());
+        result.addProperty("size", symbol.getSize());
+        result.addProperty("storage", symbol.getStorage().toString());
+        result.addProperty("name_locked", symbol.isNameLocked());
+        result.addProperty("type_locked", symbol.isTypeLocked());
+        return result;
+    }
+
+    private JsonObject decompileDiagnostics(Function function, DecompileResults results, String openError, String code) {
+        JsonObject diagnostics = new JsonObject();
+        JsonObject decompiler = new JsonObject();
+        decompiler.addProperty("status", results == null ? "open_failed" :
+            results.decompileCompleted() ? "completed" : "failed");
+        decompiler.addProperty("completed", results != null && results.decompileCompleted());
+        if (results == null) {
+            decompiler.add("timed_out", JsonNull.INSTANCE);
+            decompiler.add("cancelled", JsonNull.INSTANCE);
+            decompiler.add("failed_to_start", JsonNull.INSTANCE);
+        } else {
+            decompiler.addProperty("timed_out", results.isTimedOut());
+            decompiler.addProperty("cancelled", results.isCancelled());
+            decompiler.addProperty("failed_to_start", results.failedToStart());
+        }
+        decompiler.addProperty("code_available", code != null);
+        JsonArray warningComments = new JsonArray();
+        if (code != null) {
+            // Markup splits a warning into word tokens. Preserve the rendered block instead.
+            java.util.regex.Matcher comments = java.util.regex.Pattern.compile(
+                "(?m)^\\h*/\\*\\h*WARNING:[\\s\\S]*?\\*/")
+                .matcher(code);
+            while (comments.find()) warningComments.add(comments.group().stripLeading());
+        }
+        decompiler.add("warning_comments", warningComments);
+        String message = results == null ? openError : results.getErrorMessage();
+        decompiler.addProperty("raw_message", message); // Preserve null vs empty, and whitespace.
+        decompiler.addProperty("timeout_seconds", 30);
+        diagnostics.add("decompiler", decompiler);
+        diagnostics.addProperty("semantic_completeness", "not_established");
+
+        JsonObject database = new JsonObject();
+        database.addProperty("signature", function.getPrototypeString(false, false));
+        database.addProperty("signature_source", function.getSignatureSource().toString());
+        database.addProperty("calling_convention", function.getCallingConventionName());
+        database.addProperty("custom_variable_storage", function.hasCustomVariableStorage());
+        database.addProperty("no_return", function.hasNoReturn());
+        database.addProperty("varargs", function.hasVarArgs());
+        database.add("return", databaseParameterJson(function.getReturn()));
+        JsonArray parameters = new JsonArray();
+        for (Parameter parameter : function.getParameters()) parameters.add(databaseParameterJson(parameter));
+        database.add("parameters", parameters);
+        diagnostics.add("database", database);
+
+        JsonObject body = new JsonObject();
+        body.add("ranges", addressRangesJson(function.getBody()));
+        body.addProperty("range_count", function.getBody().getNumAddressRanges());
+        body.addProperty("total_size", function.getBody().getNumAddresses());
+        body.addProperty("is_contiguous", function.getBody().getNumAddressRanges() <= 1);
+        diagnostics.add("body", body);
+
+        ghidra.program.model.pcode.HighFunction high = results == null ? null : results.getHighFunction();
+        if (high == null) {
+            diagnostics.add("recovered", JsonNull.INSTANCE);
+        } else {
+            ghidra.program.model.pcode.FunctionPrototype prototype = high.getFunctionPrototype();
+            JsonObject recovered = new JsonObject();
+            recovered.addProperty("calling_convention", prototype.getModelName());
+            recovered.addProperty("return_type", prototype.getReturnType().getDisplayName());
+            recovered.addProperty("return_storage", prototype.getReturnStorage() == null ? null : prototype.getReturnStorage().toString());
+            recovered.addProperty("no_return", prototype.hasNoReturn());
+            recovered.addProperty("varargs", prototype.isVarArg());
+            JsonArray recoveredParameters = new JsonArray();
+            for (int i = 0; i < prototype.getNumParams(); i++)
+                recoveredParameters.add(recoveredParameterJson(prototype.getParam(i)));
+            recovered.add("parameters", recoveredParameters);
+            diagnostics.add("recovered", recovered);
+        }
+        String address = function.getEntryPoint().toString();
+        JsonObject hints = new JsonObject();
+        hints.addProperty("function", "function get " + address);
+        hints.addProperty("body", "function body " + address);
+        hints.addProperty("calls", "function calls " + address);
+        hints.addProperty("disassembly", "function disasm " + address);
+        diagnostics.add("inspection_hints", hints);
+        return diagnostics;
+    }
+
+    private JsonObject decompileError(Function function, DecompileResults results, String message, String openError) {
+        JsonObject result = errorResult(message);
+        result.addProperty("name", function.getName());
+        result.addProperty("address", function.getEntryPoint().toString());
+        result.add("diagnostics", decompileDiagnostics(function, results, openError, null));
+        return result;
+    }
+
     private JsonObject handleDecompile(JsonObject args) {
         if (currentProgram == null) {
             return errorResult("No program loaded");
@@ -931,13 +1045,16 @@ public class GhidraCliBridge extends GhidraScript {
         DecompInterface decompiler = new DecompInterface();
         try {
             if (!decompiler.openProgram(currentProgram)) {
-                return errorResult("Decompilation failed: openProgram failed: " + decompiler.getLastMessage());
+                return decompileError(func, null, "Decompilation failed: openProgram failed: " + decompiler.getLastMessage(), decompiler.getLastMessage());
             }
 
             DecompileResults results = decompiler.decompileFunction(func, 30, TaskMonitor.DUMMY);
 
-            if (results.decompileCompleted()) {
-                String code = results.getDecompiledFunction().getC();
+            // getDecompiledFunction() pretty-prints anew on every call; render once.
+            ghidra.app.decompiler.DecompiledFunction decompiled = results.decompileCompleted()
+                ? results.getDecompiledFunction() : null;
+            String code = decompiled == null ? null : decompiled.getC();
+            if (code != null) {
                 JsonObject result = new JsonObject();
                 result.addProperty("name", func.getName());
                 result.addProperty("address", func.getEntryPoint().toString());
@@ -953,10 +1070,11 @@ public class GhidraCliBridge extends GhidraScript {
                     result.add("signature", JsonNull.INSTANCE);
                 }
                 result.addProperty("code", code);
+                result.add("diagnostics", decompileDiagnostics(func, results, null, code));
 
                 // Decompilation can "complete" while still reporting non-fatal warnings
                 // (e.g. partial type recovery, unreachable code, bad data flow). Surface
-                // these so callers can tell a clean decompile from a suspect one.
+                // these as evidence; no message does not establish semantic completeness.
                 String warningMsg = results.getErrorMessage();
                 if (warningMsg != null && !warningMsg.isEmpty()) {
                     result.addProperty("warnings", warningMsg);
@@ -1008,7 +1126,7 @@ public class GhidraCliBridge extends GhidraScript {
 
                 return result;
             } else {
-                return errorResult("Decompilation failed: " + decompileFailureReason(results));
+                return decompileError(func, results, "Decompilation failed: " + decompileFailureReason(results), null);
             }
         } finally {
             decompiler.dispose();
