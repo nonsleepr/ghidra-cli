@@ -11,13 +11,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Cache dependency compilation separately from source changes.
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 RUN mkdir -p src/bin \
     && echo "fn main() {}" > src/main.rs \
     && echo "" > src/lib.rs \
     && cargo build --release --locked \
     && rm -rf src
 
+ARG GHIDRA_CLI_SOURCE_REVISION=unknown
+ENV GHIDRA_CLI_SOURCE_REVISION=${GHIDRA_CLI_SOURCE_REVISION}
 COPY src ./src
 RUN touch src/main.rs src/lib.rs \
     && cargo build --release --locked --bin ghidra-cli

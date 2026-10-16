@@ -26,6 +26,14 @@ pub enum BridgeStartMode {
 /// Embedded Java bridge script
 const JAVA_BRIDGE_SCRIPT: &str = include_str!("scripts/GhidraCliBridge.java");
 
+pub fn script_hash() -> String {
+    format!("{:x}", md5::compute(JAVA_BRIDGE_SCRIPT))
+}
+
+pub fn project_key(project_path: &Path) -> String {
+    project_hash(project_path)
+}
+
 /// Get the data directory for bridge port/PID files.
 pub fn get_data_dir() -> Result<PathBuf> {
     let dir = dirs::data_local_dir()
@@ -274,7 +282,10 @@ pub fn start_bridge(
         .join("scripts");
     std::fs::create_dir_all(&scripts_dir)?;
     let java_script_path = scripts_dir.join("GhidraCliBridge.java");
-    std::fs::write(&java_script_path, JAVA_BRIDGE_SCRIPT)?;
+    let script = JAVA_BRIDGE_SCRIPT
+        .replace("@BRIDGE_SCRIPT_HASH@", &script_hash())
+        .replace("@CLI_BUILD_ID@", env!("GHIDRA_CLI_BUILD_ID"));
+    std::fs::write(&java_script_path, script)?;
 
     // Find analyzeHeadless
     let headless_script = find_headless_script(ghidra_install_dir)?;

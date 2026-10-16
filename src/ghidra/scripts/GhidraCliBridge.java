@@ -438,10 +438,22 @@ public class GhidraCliBridge extends GhidraScript {
             result.addProperty("current_program", currentProgram.getName());
         }
         result.addProperty("uptime_ms", System.currentTimeMillis() - startTime);
+        result.addProperty("protocol_version", 1);
+        result.addProperty("script_hash", "@BRIDGE_SCRIPT_HASH@");
+        result.addProperty("cli_build_id", "@CLI_BUILD_ID@");
+        result.addProperty("pid", ProcessHandle.current().pid());
+        result.addProperty("ghidra_version", ghidra.framework.Application.getApplicationVersion());
+        result.addProperty("java_version", System.getProperty("java.version"));
+        result.addProperty("java_home", System.getProperty("java.home"));
 
         Project project = state.getProject();
         if (project != null) {
             result.addProperty("project_name", project.getName());
+            try {
+                result.addProperty("project_path", new File(project.getProjectLocator().getLocation(), project.getName()).getCanonicalPath());
+            } catch (IOException e) {
+                result.addProperty("project_path_error", e.getMessage());
+            }
             try {
                 ProjectData projectData = project.getProjectData();
                 DomainFolder rootFolder = projectData.getRootFolder();
@@ -709,7 +721,9 @@ public class GhidraCliBridge extends GhidraScript {
                 throw e;
             }
         } catch (Exception e) {
-            return errorResult("Failed to create function: " + e.getMessage());
+            String hint = e.getMessage() != null && e.getMessage().contains("Function body must contain the entrypoint")
+                ? ". Inspect the entry and overlaps, then use 'script java' with disassemble/createFunction for explicit persistent preparation; see docs/diagnostics.md. Discovery decoding does not create instructions." : "";
+            return errorResult("Failed to create function: " + e.getMessage() + hint);
         }
     }
 

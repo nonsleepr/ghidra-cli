@@ -456,3 +456,5 @@ regression checks. Use a new, isolated project path. Run the Rust suite with
 ## License
 
 GPL-3.0 License - See [LICENSE](LICENSE) for details.
+
+Build and bridge troubleshooting: [diagnostics](docs/diagnostics.md).

@@ -361,3 +361,131 @@ fn unwind_endianness_encodings_absence_and_unsupported_discovery() {
     assert_eq!(absent["available"], false);
     assert_eq!(absent["count"], 0);
 }
+
+impl Probe {
+    fn status(&self) -> Value {
+        let output = assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
+            .args(["status", "--json", "--project"])
+            .arg(&self.project)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+    fn stop(&self) {
+        assert!(assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
+            .args(["stop", "--project"])
+            .arg(&self.project)
+            .output()
+            .unwrap()
+            .status
+            .success());
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn identities_and_repeated_queries_reuse_one_bridge() {
+    let p = Probe::new();
+    let stopped = p.status();
+    assert_eq!(stopped["state"], "stopped");
+    assert_eq!(stopped["bridge"], Value::Null);
+    p.ok(&["program", "info"]);
+    let initial = p.status();
+    assert_eq!(initial["state"], "running");
+    assert_eq!(initial["compatibility"]["protocol"], "match");
+    assert_eq!(initial["compatibility"]["script"], "match");
+    assert_eq!(initial["pid"], initial["bridge"]["pid"]);
+    assert_eq!(
+        initial["client"]["build_id"],
+        initial["bridge"]["cli_build_id"]
+    );
+    assert_eq!(
+        initial["canonical_project"],
+        initial["bridge"]["project_path"]
+    );
+    assert!(initial["bridge"]["java_version"].is_string());
+    assert!(initial["bridge"]["ghidra_version"].is_string());
+    let before = p.unchanged_marker();
+    for _ in 0..3 {
+        p.ok(&["find", "string", "DiscoveryNeedle", "--details"]);
+        let current = p.status();
+        assert_eq!(current["pid"], initial["pid"]);
+        assert_eq!(current["port"], initial["port"]);
+        assert_eq!(current["project_key"], initial["project_key"]);
+        assert!(
+            current["bridge"]["uptime_ms"].as_u64().unwrap()
+                >= initial["bridge"]["uptime_ms"].as_u64().unwrap()
+        );
+    }
+    assert_eq!(p.unchanged_marker(), before);
+    p.stop();
+    assert_eq!(p.status()["state"], "stopped");
+}
+
+#[test]
+#[serial_test::serial]
+fn prepared_function_signature_readback_and_reopen() {
+    let p = Probe::new();
+    // This entry has bytes but no persistent disassembly.
+    assert_eq!(
+        p.java("println(String.valueOf(getInstructionAt(toAddr(0x401010L))));"),
+        "null"
+    );
+    let ordinary = p.run(&["function", "create", "0x401010", "prepared_fixture"]);
+    eprintln!(
+        "Unprepared create: success={} stderr={}",
+        ordinary.status.success(),
+        String::from_utf8_lossy(&ordinary.stderr)
+    );
+    assert!(!ordinary.status.success());
+    assert!(String::from_utf8_lossy(&ordinary.stderr).contains("Failed to create function"));
+    assert!(String::from_utf8_lossy(&ordinary.stderr).contains("script java"));
+    assert_eq!(
+        p.java("println(String.valueOf(getFunctionAt(toAddr(0x401010L))));"),
+        "null"
+    );
+    p.java(
+        "disassemble(toAddr(0x401010L)); createFunction(toAddr(0x401010L), \"prepared_fixture\");",
+    );
+    let prepared = p.ok(&["function", "get", "0x401010"]);
+    assert_eq!(prepared["name"], "prepared_fixture");
+    p.ok(&["decompile", "0x401010"]);
+    // Match the saved discrepancy's unusual starting state without touching its project.
+    p.java("var f = getFunctionAt(toAddr(0x401010L)); f.setCallingConvention(ghidra.program.model.listing.Function.UNKNOWN_CALLING_CONVENTION_STRING); f.setCustomVariableStorage(true);");
+    let edited = p.ok(&[
+        "function",
+        "set-signature",
+        "0x401010",
+        "--signature",
+        "bool prepared_fixture(char *secret, char *key)",
+    ]);
+    let readback = p.ok(&["function", "get", "0x401010"]);
+    assert_eq!(
+        readback["signature"], edited["signature"],
+        "{edited} {readback}"
+    );
+    assert!(
+        readback["signature"].as_str().unwrap().contains("secret"),
+        "{readback}"
+    );
+    assert!(
+        readback["signature"].as_str().unwrap().contains("key"),
+        "{readback}"
+    );
+    p.ok(&["decompile", "0x401010"]);
+    assert_eq!(
+        p.ok(&["function", "get", "0x401010"])["signature"],
+        edited["signature"]
+    );
+    p.stop();
+    assert_eq!(
+        p.ok(&["function", "get", "0x401010"])["signature"],
+        edited["signature"]
+    );
+    eprintln!("Prepared signature persisted: {}", edited["signature"]);
+}

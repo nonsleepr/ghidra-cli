@@ -38,6 +38,7 @@
           craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
           commonArgs = {
+            GHIDRA_CLI_SOURCE_REVISION = self.rev or "unknown";
             src = lib.cleanSourceWith {
               src = ./.;
               filter = path: type:

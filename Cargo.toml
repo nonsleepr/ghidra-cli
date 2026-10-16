@@ -87,3 +87,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "ghidra-cli"
 path = "src/main.rs"
+
+[build-dependencies]
+md5 = "0.7"

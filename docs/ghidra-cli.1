@@ -812,3 +812,17 @@ preserved. Automatic RTTI discovery and table-boundary inference are unsupported
 See docs/static-discovery.md for supported encodings, search limits, and
 completeness qualifications. These queries do not run analyzers or modify the
 program database.
+
+.SH BUILD AND BRIDGE DIAGNOSTICS
+.B version --json
+reports the client build ID, executable, source revision when supplied, embedded
+bridge script hash and expected protocol version.
+.B status --json --project PROJECT
+reports client and live bridge identities, project path/key, PID/port, uptime,
+loaded program, runtime versions and compatibility without starting or refreshing
+a bridge. Missing identity fields from older bridges are unknown.
+.PP
+Script differences alone do not trigger a restart. Declared protocol mismatches
+are rejected on query reuse; explicitly restart the selected project if needed.
+Unknown commands retain the single refresh/retry, with a diagnostic reason.
+Build/script hashes identify content and are not authenticity guarantees.

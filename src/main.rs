@@ -4,6 +4,7 @@ mod error;
 mod filter;
 mod format;
 mod ghidra;
+mod identity;
 mod ipc;
 mod query;
 
@@ -87,7 +88,7 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
         // Non-bridge commands
         Commands::Init => handle_init(),
         Commands::Doctor => handle_doctor(),
-        Commands::Version => handle_version(),
+        Commands::Version => handle_version(cli.json),
         Commands::Config(cmd) => handle_config_command(cmd.clone()),
         Commands::SetDefault(args) => handle_set_default(args.clone()),
         Commands::Project(args) => handle_project_command(args.command.clone()),
@@ -628,6 +629,7 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
                 verify_bridge(&client)?;
                 client
             } else {
+                tracing::info!(reason = "no_live_bridge", project = %project_path.display(), client = %identity::client_identity(), "Starting bridge for query");
                 // Auto-start bridge. Resolve program from CLI arg or project metadata.
                 let program = resolve_program_for_bridge(
                     extract_program_from_command(&cli.command),
@@ -668,6 +670,13 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
                         eprintln!(
                             "Bridge command not supported by running instance. Restarting bridge and retrying..."
                         );
+                    }
+
+                    tracing::info!(reason = "unknown_command", project = %project_path.display(), client = %identity::client_identity(), bridge = ?client.bridge_info().ok(), "Refreshing bridge and retrying request");
+                    if !cli.quiet {
+                        eprintln!("Refresh reason: unknown_command; project {}; client build {}; running bridge {}",
+                            project_path.display(), env!("GHIDRA_CLI_BUILD_ID"),
+                            client.bridge_info().unwrap_or(serde_json::Value::Null));
                     }
 
                     // Running bridge may be from an older script; force restart to load
@@ -1226,11 +1235,12 @@ fn handle_bridge_command(cli: Cli) -> anyhow::Result<()> {
         Commands::Start { project, program } => handle_bridge_start(project, program),
         Commands::Stop { project } => handle_bridge_stop(project),
         Commands::Restart { project, program } => {
+            tracing::info!(reason = "explicit_restart", project = ?project, "Restart requested");
             handle_bridge_stop(project.clone())?;
             std::thread::sleep(std::time::Duration::from_secs(1));
             handle_bridge_start(project, program)
         }
-        Commands::Status { project } => handle_bridge_status(project),
+        Commands::Status { project } => handle_bridge_status(project, cli.json),
         Commands::Ping { project } => handle_bridge_ping(project),
         _ => unreachable!(),
     }
@@ -1283,33 +1293,75 @@ fn handle_bridge_stop(project: Option<String>) -> anyhow::Result<()> {
 }
 
 /// Get bridge status for a project.
-fn handle_bridge_status(project: Option<String>) -> anyhow::Result<()> {
+fn handle_bridge_status(project: Option<String>, json_output: bool) -> anyhow::Result<()> {
     let config = Config::load()?;
     let project_path = resolve_project_path(&project, &config)?;
-
-    match bridge::bridge_status(&project_path)? {
-        BridgeStatus::Running { port, pid } => {
-            println!("Bridge is running:");
-            println!("  PID: {}", pid);
-            println!("  Port: {}", port);
-            println!("  Project: {}", project_path.display());
-
-            // Try to get extended info from the bridge
-            let client = BridgeClient::new(port);
-            if let Ok(info) = client.bridge_info() {
-                if let Some(prog) = info.get("current_program").and_then(|v| v.as_str()) {
-                    println!("  Current program: {}", prog);
-                }
-                if let Some(count) = info.get("program_count").and_then(|v| v.as_u64()) {
-                    println!("  Programs: {}", count);
-                }
+    let canonical = project_path
+        .parent()
+        .and_then(|p| dunce::canonicalize(p).ok())
+        .map(|p| p.join(project_path.file_name().unwrap_or_default()));
+    let mut result = serde_json::json!({
+        "state": "stopped", "project_path": project_path,
+        "canonical_project": canonical, "project_key": bridge::project_key(&project_path),
+        "port_file": bridge::port_file_path(&project_path)?,
+        "pid_file": bridge::pid_file_path(&project_path)?,
+        "client": identity::client_identity(), "bridge": null, "compatibility": null,
+    });
+    if let BridgeStatus::Running { port, pid } = bridge::bridge_status(&project_path)? {
+        result["state"] = "running".into();
+        result["pid"] = pid.into();
+        result["port"] = port.into();
+        match BridgeClient::new(port).bridge_info() {
+            Ok(info) => {
+                result["compatibility"] = identity::compatibility(&info);
+                result["bridge"] = info;
             }
-        }
-        BridgeStatus::Stopped => {
-            println!("No bridge running for project: {}", project_path.display());
+            Err(error) => result["diagnostic_error"] = error.to_string().into(),
         }
     }
-
+    if json_output {
+        println!("{}", serde_json::to_string(&result)?);
+    } else {
+        if result["state"] == "stopped" {
+            println!("No bridge running for project: {}", project_path.display());
+        } else {
+            println!("Bridge is running for project: {}", project_path.display());
+        }
+        for (label, pointer) in [
+            ("Canonical project", "/canonical_project"),
+            ("Project key", "/project_key"),
+            ("Port file", "/port_file"),
+            ("PID file", "/pid_file"),
+            ("Client build", "/client/build_id"),
+            ("Client executable", "/client/executable"),
+            ("Embedded script", "/client/bridge_script_hash"),
+            ("Expected protocol", "/client/bridge_protocol_version"),
+            ("PID", "/pid"),
+            ("Port", "/port"),
+            ("Current program", "/bridge/current_program"),
+            ("Bridge build", "/bridge/cli_build_id"),
+            ("Bridge script", "/bridge/script_hash"),
+            ("Bridge protocol", "/bridge/protocol_version"),
+            ("Uptime (ms)", "/bridge/uptime_ms"),
+            ("Ghidra", "/bridge/ghidra_version"),
+            ("Java", "/bridge/java_version"),
+            ("Java home", "/bridge/java_home"),
+            ("Protocol comparison", "/compatibility/protocol"),
+            ("Script comparison", "/compatibility/script"),
+            ("Diagnostic error", "/diagnostic_error"),
+        ] {
+            if let Some(value) = result.pointer(pointer).filter(|v| !v.is_null()) {
+                println!(
+                    "  {}: {}",
+                    label,
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| value.to_string())
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1425,6 +1477,12 @@ fn handle_init() -> anyhow::Result<()> {
 
 fn handle_doctor() -> anyhow::Result<()> {
     println!("Ghidra CLI Doctor\n=================\n");
+    let identity = identity::client_identity();
+    println!("Client build: {}", identity["build_id"].as_str().unwrap());
+    println!(
+        "Executable: {}\n",
+        identity["executable"].as_str().unwrap_or("unknown")
+    );
     let config = Config::load()?;
     let mut failures = Vec::new();
     let mut check = |name: &str, result: anyhow::Result<String>| match result {
@@ -1503,9 +1561,28 @@ fn handle_doctor() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_version() -> anyhow::Result<()> {
-    println!("ghidra-cli {}", env!("CARGO_PKG_VERSION"));
-    println!("Rust CLI for Ghidra reverse engineering");
+fn handle_version(json_output: bool) -> anyhow::Result<()> {
+    let identity = identity::client_identity();
+    if json_output {
+        println!("{}", serde_json::to_string(&identity)?);
+    } else {
+        println!("ghidra-cli {}", env!("CARGO_PKG_VERSION"));
+        println!("Build: {}", identity["build_id"].as_str().unwrap());
+        println!(
+            "Source revision: {}",
+            identity["source_revision"].as_str().unwrap()
+        );
+        println!("Target: {}", identity["target"].as_str().unwrap());
+        println!(
+            "Executable: {}",
+            identity["executable"].as_str().unwrap_or("unknown")
+        );
+        println!(
+            "Bridge script: {} (protocol {})",
+            identity["bridge_script_hash"].as_str().unwrap(),
+            identity["bridge_protocol_version"]
+        );
+    }
     Ok(())
 }
 
@@ -1744,6 +1821,9 @@ fn verify_bridge(client: &BridgeClient) -> anyhow::Result<()> {
     if !client.ping()? {
         anyhow::bail!("Bridge not responding to ping");
     }
+    // Legacy bridges have no declared protocol. Preserve their existing
+    // unknown-command refresh path, but reject a declared incompatible version.
+    identity::check_protocol(&client.bridge_info()?)?;
     Ok(())
 }
 
