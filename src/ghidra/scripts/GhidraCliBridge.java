@@ -215,6 +215,7 @@ public class GhidraCliBridge extends GhidraScript {
             case "get_function":    return handleGetFunction(args);
             case "rename_function": return handleRenameFunction(args);
             case "create_function": return handleCreateFunction(args);
+            case "function_prepare": return handlePrepareFunction(args);
             case "delete_function": return handleDeleteFunction(args);
             case "decompile":       return handleDecompile(args);
             case "list_strings":    return handleListStrings(args);
@@ -722,8 +723,151 @@ public class GhidraCliBridge extends GhidraScript {
             }
         } catch (Exception e) {
             String hint = e.getMessage() != null && e.getMessage().contains("Function body must contain the entrypoint")
-                ? ". Inspect the entry and overlaps, then use 'script java' with disassemble/createFunction for explicit persistent preparation; see docs/diagnostics.md. Discovery decoding does not create instructions." : "";
+                ? ". Inspect the entry and overlaps, then use 'function prepare' with an explicit --end or --max-bytes bound; see docs/function-preparation.md. Discovery decoding does not create instructions." : "";
             return errorResult("Failed to create function: " + e.getMessage() + hint);
+        }
+    }
+
+    private JsonArray addressRangesJson(ghidra.program.model.address.AddressSetView set) {
+        JsonArray ranges = new JsonArray();
+        for (ghidra.program.model.address.AddressRange range : set.getAddressRanges()) {
+            JsonObject row = new JsonObject();
+            row.addProperty("min_address", range.getMinAddress().toString());
+            row.addProperty("max_address", range.getMaxAddress().toString());
+            row.addProperty("length", range.getLength());
+            ranges.add(row);
+        }
+        return ranges;
+    }
+
+    /** Explicit mutation: bounded, non-call control-flow walk with no auto-analysis. */
+    private JsonObject handlePrepareFunction(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        int txId = -1;
+        boolean commit = false;
+        try {
+            Address entry = resolveAddress(getArgString(args, "address"));
+            if (entry == null || !entry.getAddressSpace().isMemorySpace()
+                    || entry.getAddressSpace().getAddressableUnitSize() != 1)
+                throw new IOException("A byte-addressable memory entry is required");
+            String endText = getArgString(args, "end");
+            boolean hasBytes = args.has("max_bytes") && !args.get("max_bytes").isJsonNull();
+            if ((endText != null) == hasBytes)
+                throw new IOException("Specify exactly one of --end or --max-bytes");
+            Address end;
+            if (hasBytes) {
+                long count = args.get("max_bytes").getAsLong();
+                if (count < 1 || count > 1048576) throw new IOException("--max-bytes must be 1 through 1048576");
+                end = entry.addNoWrap(count - 1);
+            } else {
+                end = resolveAddress(endText);
+            }
+            if (end == null || !entry.getAddressSpace().equals(end.getAddressSpace()) || end.compareTo(entry) < 0)
+                throw new IOException("End must be at or after the entry in the same address space");
+            long distance = end.subtract(entry);
+            if (distance < 0 || distance >= 1048576) throw new IOException("Preparation window exceeds 1 MiB");
+            ghidra.program.model.address.AddressSet scope = new ghidra.program.model.address.AddressSet(entry, end);
+            Memory memory = currentProgram.getMemory();
+            if (!memory.getLoadedAndInitializedAddressSet().contains(scope))
+                throw new IOException("Preparation window must be fully loaded and initialized");
+            for (MemoryBlock block : memory.getBlocks()) {
+                if (scope.intersects(block.getStart(), block.getEnd()) && !block.isExecute())
+                    throw new IOException("Preparation window includes non-executable memory: " + block.getName());
+            }
+            int alignment = currentProgram.getLanguage().getInstructionAlignment();
+            if (entry.getOffsetAsBigInteger().mod(java.math.BigInteger.valueOf(alignment)).signum() != 0)
+                throw new IOException("Entry violates instruction alignment " + alignment);
+            Listing listing = currentProgram.getListing();
+            FunctionManager fm = currentProgram.getFunctionManager();
+            Iterator<Function> existing = fm.getFunctionsOverlapping(scope);
+            if (existing.hasNext()) throw new IOException("Preparation window overlaps existing function " + existing.next().getName());
+            if (listing.getDefinedDataContaining(entry) != null || listing.getDefinedData(scope, true).hasNext())
+                throw new IOException("Preparation window overlaps defined data");
+            Instruction containing = listing.getInstructionContaining(entry);
+            if (containing != null && !containing.getAddress().equals(entry))
+                throw new IOException("Entry is inside an existing instruction");
+            String name = getArgString(args, "name");
+            if (name == null || name.isEmpty()) name = "FUN_" + entry.toString().replace(":", "");
+
+            txId = currentProgram.startTransaction("Prepare bounded function");
+            ghidra.program.model.address.AddressSet body = new ghidra.program.model.address.AddressSet();
+            ghidra.program.model.address.AddressSet disassembled = new ghidra.program.model.address.AddressSet();
+            java.util.ArrayDeque<Address> pending = new java.util.ArrayDeque<>();
+            Set<Address> visited = new HashSet<>();
+            pending.add(entry);
+            int newInstructions = 0, reusedInstructions = 0;
+            long deadline = System.nanoTime() + 30_000_000_000L;
+            while (!pending.isEmpty()) {
+                monitor.checkCancelled();
+                if (System.nanoTime() - deadline >= 0) throw new IOException("30-second preparation budget exceeded");
+                Address address = pending.removeFirst();
+                if (!scope.contains(address)) throw new IOException("Control flow escapes preparation window at " + address);
+                if (!visited.add(address)) continue;
+                if (visited.size() > 65536) throw new IOException("Preparation exceeds 65536 instructions");
+                Instruction instruction = listing.getInstructionAt(address);
+                if (instruction == null) {
+                    if (listing.getInstructionContaining(address) != null)
+                        throw new IOException("Control flow enters the middle of an instruction at " + address);
+                    // Restrict starts to a single address: no callees or fallthrough
+                    // are decoded implicitly. Ghidra still decodes full instructions,
+                    // so check the returned byte range before accepting any changes.
+                    ghidra.app.cmd.disassemble.DisassembleCommand command =
+                        new ghidra.app.cmd.disassemble.DisassembleCommand(address,
+                            new ghidra.program.model.address.AddressSet(address), false);
+                    command.enableCodeAnalysis(false);
+                    boolean ok = command.applyTo(currentProgram, monitor);
+                    ghidra.program.model.address.AddressSet decoded = command.getDisassembledAddressSet();
+                    if (!scope.contains(decoded)) throw new IOException("Decoded instruction crosses preparation boundary at " + address);
+                    disassembled.add(decoded);
+                    instruction = listing.getInstructionAt(address);
+                    if (!ok || instruction == null) throw new IOException("Cannot decode instruction at " + address + ": " + command.getStatusMsg());
+                    newInstructions++;
+                } else {
+                    reusedInstructions++;
+                }
+                if (!scope.contains(instruction.getMinAddress(), instruction.getMaxAddress()))
+                    throw new IOException("Instruction crosses preparation boundary at " + address);
+                if (instruction.getDelaySlotDepth() != 0 || instruction.isInDelaySlot())
+                    throw new IOException("Delay-slot instructions are not supported by bounded preparation");
+                body.add(instruction.getMinAddress(), instruction.getMaxAddress());
+                FlowType flow = instruction.getFlowType();
+                if (flow.isJump() && (flow.isComputed() || instruction.getFlows().length == 0))
+                    throw new IOException("Unresolved jump at " + address + "; bounded preparation cannot establish its body");
+                if (!flow.isCall()) {
+                    for (Address target : instruction.getFlows()) pending.addLast(target);
+                }
+                Address fallthrough = instruction.getFallThrough();
+                if (fallthrough != null) pending.addLast(fallthrough);
+            }
+            if (!body.contains(entry)) throw new IOException("Prepared body does not contain the entry");
+            Function created = fm.createFunction(name, entry, body, SourceType.USER_DEFINED);
+            if (created == null) throw new IOException("Ghidra did not create the function");
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "prepared");
+            result.addProperty("name", created.getName());
+            result.addProperty("address", entry.toString());
+            result.addProperty("entry_point", entry.toString());
+            result.add("ranges", addressRangesJson(created.getBody()));
+            result.addProperty("range_count", created.getBody().getNumAddressRanges());
+            result.addProperty("total_size", created.getBody().getNumAddresses());
+            result.addProperty("is_contiguous", created.getBody().getNumAddressRanges() <= 1);
+            result.add("disassembled_ranges", addressRangesJson(disassembled));
+            result.addProperty("new_instruction_count", newInstructions);
+            result.addProperty("reused_instruction_count", reusedInstructions);
+            result.addProperty("analysis_run", false);
+            JsonObject bounds = new JsonObject();
+            bounds.addProperty("start", entry.toString());
+            bounds.addProperty("end_inclusive", end.toString());
+            bounds.addProperty("byte_limit", distance + 1);
+            bounds.addProperty("instruction_limit", 65536);
+            bounds.addProperty("time_limit_ms", 30000);
+            result.add("scope", bounds);
+            commit = true;
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to prepare function (no changes committed): " + e.getMessage());
+        } finally {
+            if (txId != -1) currentProgram.endTransaction(txId, commit);
         }
     }
 

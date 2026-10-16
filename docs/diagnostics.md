@@ -45,23 +45,16 @@ both identities to stderr unless quiet; the file log also records it. Startup
 without a live bridge and explicit restarts have corresponding file-log reasons.
 Do not restart an unrelated investigation's bridge just to collect diagnostics.
 
-For selective function preparation on an unanalyzed import, inspect addresses
-and potential overlaps first. Existing inline Java can persist disassembly and
-create the function:
+For selective preparation of an unanalyzed import, use the explicit mutating
+[`function prepare`](function-preparation.md) command with a reviewed entry and
+an explicit bound. It provides atomic disassembly/function creation and reports
+the actual body. Inline Java remains available for cases outside its coverage,
+but the generic `disassemble`/`createFunction` route can follow control flow and
+is not bounded by this interface.
 
-```sh
-ghidra-cli script java 'disassemble(toAddr(0x401010L)); createFunction(toAddr(0x401010L), "selected_function");' \
-  --project PROJECT --program PROGRAM
-```
-
-This is a mutation, can follow control flow, and is not a bounded preparation API.
-Read the function back and inspect/decompile it independently. For signature
-reports, capture `version`, `status` and immediate `function get` output; a
-successful edit response alone does not demonstrate persistence after reopen.
-
-A synthetic stripped ELF imported with `-noanalysis` reproduces `function create`
-failing with “Function body must contain the entrypoint” before disassembly. The
-error now points to the explicit preparation route. The same fixture verifies
-a two-pointer signature after preparation, unknown calling convention and custom
-parameter storage, immediate independent readback, decompilation and stop/reopen.
+For signature reports, capture `version`, `status` and immediate `function get`
+output; a successful edit response alone does not demonstrate persistence after
+reopen. A synthetic stripped ELF reproduces the missing-instruction creation
+failure, and now verifies bounded preparation, two-pointer signature readback,
+decompilation and stop/reopen with unknown calling convention/custom storage.
 The historical investigation's signature discrepancy remains unreproduced.

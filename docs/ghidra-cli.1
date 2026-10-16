@@ -826,3 +826,18 @@ Script differences alone do not trigger a restart. Declared protocol mismatches
 are rejected on query reuse; explicitly restart the selected project if needed.
 Unknown commands retain the single refresh/retry, with a diagnostic reason.
 Build/script hashes identify content and are not authenticity guarantees.
+
+.SH BOUNDED FUNCTION PREPARATION
+.B function prepare ADDRESS [NAME] --max-bytes N
+or
+.B function prepare ADDRESS [NAME] --end ADDRESS
+persists bounded disassembly and creates one function atomically. End is inclusive;
+exactly one bound is required, at most 1 MiB. The window must be loaded,
+initialized, executable and free of functions/defined data. Existing instructions
+may be reused. Full instruction bounds are checked before committing.
+.PP
+Follows fallthrough/direct branches, excluding calls. Unresolved jumps, delay
+slots, decode failures, offcut targets and non-call flow outside the window fail
+and roll back all changes. Additional limits: 65536 instructions and 30 seconds.
+No analyzer runs. Returns actual body ranges and new/reused instruction counts;
+the requested window and unwind candidates are not authoritative function bodies.

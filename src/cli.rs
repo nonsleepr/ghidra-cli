@@ -323,6 +323,8 @@ pub enum FunctionCommands {
     Rename(RenameArgs),
     /// Create function
     Create(CreateFunctionArgs),
+    /// Persist bounded disassembly and create one function atomically
+    Prepare(PrepareFunctionArgs),
     /// Delete function
     Delete(FunctionGetArgs),
     /// Set function signature from C-style string
@@ -376,6 +378,25 @@ pub struct RenameArgs {
 pub struct CreateFunctionArgs {
     pub address: String,
     pub name: Option<String>,
+    #[arg(long)]
+    pub program: Option<String>,
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+#[command(group(clap::ArgGroup::new("preparation_bound").required(true).args(["end", "max_bytes"])))]
+pub struct PrepareFunctionArgs {
+    /// Entry address or symbol; does not relocate an existing function
+    pub address: String,
+    /// Optional name, as with function create
+    pub name: Option<String>,
+    /// Inclusive end address of the allowed window (at most 1 MiB)
+    #[arg(long)]
+    pub end: Option<String>,
+    /// Allowed bytes starting at the entry, between 1 and 1048576
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=1048576))]
+    pub max_bytes: Option<u32>,
     #[arg(long)]
     pub program: Option<String>,
     #[arg(long)]

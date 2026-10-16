@@ -458,3 +458,5 @@ regression checks. Use a new, isolated project path. Run the Rust suite with
 GPL-3.0 License - See [LICENSE](LICENSE) for details.
 
 Build and bridge troubleshooting: [diagnostics](docs/diagnostics.md).
+
+Selective function creation: [bounded preparation](docs/function-preparation.md).

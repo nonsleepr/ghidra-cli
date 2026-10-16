@@ -153,6 +153,7 @@ fn extract_project_from_command(command: &Commands) -> Option<String> {
             cli::FunctionCommands::XRefs(args) => args.options.project.clone(),
             cli::FunctionCommands::Rename(args) => args.project.clone(),
             cli::FunctionCommands::Create(args) => args.project.clone(),
+            cli::FunctionCommands::Prepare(args) => args.project.clone(),
             cli::FunctionCommands::Delete(args) => args.options.project.clone(),
             cli::FunctionCommands::SetSignature(args) => args.project.clone(),
             cli::FunctionCommands::SetReturnType(args) => args.project.clone(),
@@ -287,6 +288,7 @@ fn extract_program_from_command(command: &Commands) -> Option<String> {
             cli::FunctionCommands::XRefs(args) => args.options.program.clone(),
             cli::FunctionCommands::Rename(args) => args.program.clone(),
             cli::FunctionCommands::Create(args) => args.program.clone(),
+            cli::FunctionCommands::Prepare(args) => args.program.clone(),
             cli::FunctionCommands::Delete(args) => args.options.program.clone(),
             cli::FunctionCommands::SetSignature(args) => args.program.clone(),
             cli::FunctionCommands::SetReturnType(args) => args.program.clone(),
@@ -850,6 +852,12 @@ fn execute_via_bridge(
                         "address": args.address,
                         "name": args.name,
                     })),
+                ),
+                FunctionCommands::Prepare(args) => client.prepare_function(
+                    &args.address,
+                    args.name.as_deref(),
+                    args.end.as_deref(),
+                    args.max_bytes,
                 ),
                 FunctionCommands::Delete(args) => client.send_command(
                     "delete_function",

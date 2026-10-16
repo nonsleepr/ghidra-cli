@@ -444,13 +444,32 @@ fn prepared_function_signature_readback_and_reopen() {
     );
     assert!(!ordinary.status.success());
     assert!(String::from_utf8_lossy(&ordinary.stderr).contains("Failed to create function"));
-    assert!(String::from_utf8_lossy(&ordinary.stderr).contains("script java"));
+    assert!(String::from_utf8_lossy(&ordinary.stderr).contains("function prepare"));
     assert_eq!(
         p.java("println(String.valueOf(getFunctionAt(toAddr(0x401010L))));"),
         "null"
     );
-    p.java(
-        "disassemble(toAddr(0x401010L)); createFunction(toAddr(0x401010L), \"prepared_fixture\");",
+    let preparation = p.ok(&[
+        "function",
+        "prepare",
+        "0x401010",
+        "prepared_fixture",
+        "--max-bytes",
+        "8",
+    ]);
+    assert_eq!(preparation["status"], "prepared");
+    assert_eq!(preparation["new_instruction_count"], 2);
+    assert_eq!(preparation["total_size"], 8);
+    assert_eq!(preparation["analysis_run"], false);
+    assert_eq!(preparation["ranges"][0]["min_address"], "00401010");
+    assert_eq!(preparation["ranges"][0]["max_address"], "00401017");
+    assert_eq!(
+        p.ok(&["function", "body", "0x401010"])["ranges"],
+        preparation["ranges"]
+    );
+    assert_eq!(
+        p.java("println(String.valueOf(getInstructionAt(toAddr(0x401018L))));"),
+        "null"
     );
     let prepared = p.ok(&["function", "get", "0x401010"]);
     assert_eq!(prepared["name"], "prepared_fixture");
@@ -488,4 +507,192 @@ fn prepared_function_signature_readback_and_reopen() {
         edited["signature"]
     );
     eprintln!("Prepared signature persisted: {}", edited["signature"]);
+}
+
+impl Probe {
+    fn preparation_state(&self) -> String {
+        self.java("println(Long.toString(currentProgram.getListing().getNumInstructions())); println(Long.toString(currentProgram.getFunctionManager().getFunctionCount())); println(Long.toString(currentProgram.getSymbolTable().getNumSymbols())); println(Long.toString(currentProgram.getBookmarkManager().getBookmarkCount())); int refs = 0; var it = currentProgram.getReferenceManager().getReferenceIterator(currentProgram.getMinAddress()); while (it.hasNext()) { it.next(); refs++; } println(Long.toString(refs));")
+    }
+    fn prepare_fails_without_changes(&self, args: &[&str], reason: &str) {
+        let before = self.preparation_state();
+        let output = self.run(args);
+        assert!(!output.status.success(), "{args:?} unexpectedly succeeded");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(reason),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            self.preparation_state(),
+            before,
+            "Failed preparation changed metadata: {args:?}"
+        );
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn preparation_bounds_conflicts_and_failures_roll_back() {
+    let p = Probe::new();
+    p.prepare_fails_without_changes(&["function", "prepare", "0x401010"], "required");
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--max-bytes", "0"],
+        "invalid value",
+    );
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--max-bytes", "1048577"],
+        "invalid value",
+    );
+    p.prepare_fails_without_changes(
+        &[
+            "function",
+            "prepare",
+            "0x401010",
+            "--end",
+            "0x401017",
+            "--max-bytes",
+            "8",
+        ],
+        "cannot be used",
+    );
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--end", "0x401000"],
+        "End must",
+    );
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--end", "0x601010"],
+        "exceeds 1 MiB",
+    );
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0xdead0000", "--max-bytes", "8"],
+        "loaded and initialized",
+    );
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x402000", "--max-bytes", "8"],
+        "non-executable",
+    );
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401000", "--max-bytes", "8"],
+        "overlaps existing function",
+    );
+    // Both failures occur after persistent decoding started. Bytes, references,
+    // symbols and disassembler error bookmarks must survive rollback unchanged.
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--max-bytes", "6"],
+        "crosses preparation boundary",
+    );
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--max-bytes", "7"],
+        "escapes preparation window",
+    );
+    p.prepare_fails_without_changes(
+        &[
+            "function",
+            "prepare",
+            "0x401010",
+            "bad\nname",
+            "--max-bytes",
+            "8",
+        ],
+        "no changes committed",
+    );
+    p.java("createData(toAddr(0x401013L), ghidra.program.model.data.ByteDataType.dataType);");
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--max-bytes", "8"],
+        "overlaps defined data",
+    );
+    p.java("clearListing(toAddr(0x401013L), toAddr(0x401013L)); setBytes(toAddr(0x401010L), new byte[]{(byte)0xe9, 0x1b, 0, 0, 0});");
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--max-bytes", "8"],
+        "escapes preparation window",
+    );
+    assert_eq!(
+        p.java("println(String.valueOf(getInstructionAt(toAddr(0x401030L))));"),
+        "null"
+    );
+    p.java("setBytes(toAddr(0x401010L), new byte[]{(byte)0xff, (byte)0xe0});");
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--max-bytes", "2"],
+        "Unresolved jump",
+    );
+    p.java("setBytes(toAddr(0x401010L), new byte[]{(byte)0x90, (byte)0xc4, 0});");
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--max-bytes", "3"],
+        "Cannot decode instruction",
+    );
+    assert_eq!(p.java("println(String.valueOf(getInstructionAt(toAddr(0x401010L)))); println(String.valueOf(getFunctionAt(toAddr(0x401010L))));"), "null\nnull");
+    p.stop();
+    assert_eq!(p.java("println(String.valueOf(getInstructionAt(toAddr(0x401010L)))); println(String.valueOf(getFunctionAt(toAddr(0x401010L))));"), "null\nnull");
+}
+
+#[test]
+#[serial_test::serial]
+fn preparation_reports_actual_ranges_skips_callees_and_reuses_instructions() {
+    let p = Probe::new();
+    p.java("disassemble(toAddr(0x401010L));");
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401011", "--max-bytes", "7"],
+        "inside an existing instruction",
+    );
+    let reused = p.ok(&[
+        "function",
+        "prepare",
+        "0x401010",
+        "reused_fixture",
+        "--end",
+        "0x401017",
+    ]);
+    assert_eq!(reused["new_instruction_count"], 0);
+    assert_eq!(reused["reused_instruction_count"], 2);
+    p.prepare_fails_without_changes(
+        &["function", "prepare", "0x401010", "--max-bytes", "8"],
+        "overlaps existing function",
+    );
+    // CALL and RET lie in the body, but a callee inside the allowed window does not.
+    p.java("currentProgram.getFunctionManager().removeFunction(toAddr(0x401010L)); clearListing(toAddr(0x401010L), toAddr(0x401017L)); setBytes(toAddr(0x401010L), new byte[]{(byte)0xe8, 0x0b, 0, 0, 0, (byte)0xc3});");
+    let call = p.ok(&[
+        "function",
+        "prepare",
+        "0x401010",
+        "caller_fixture",
+        "--max-bytes",
+        "24",
+    ]);
+    assert_eq!(call["total_size"], 6);
+    assert_eq!(call["new_instruction_count"], 2);
+    assert_eq!(call["ranges"][0]["max_address"], "00401015");
+    assert_eq!(p.java("println(String.valueOf(getInstructionAt(toAddr(0x401020L)))); println(String.valueOf(getFunctionAt(toAddr(0x401020L))));"), "null\nnull");
+    // A direct branch can yield a disjoint body; the bound is not the body.
+    p.java("currentProgram.getFunctionManager().removeFunction(toAddr(0x401010L)); clearListing(toAddr(0x401010L), toAddr(0x401017L)); setBytes(toAddr(0x401010L), new byte[]{(byte)0xeb, 6}); setByte(toAddr(0x401018L), (byte)0xc3);");
+    let split = p.ok(&[
+        "function",
+        "prepare",
+        "0x401010",
+        "split_fixture",
+        "--end",
+        "0x401018",
+    ]);
+    assert_eq!(split["total_size"], 3);
+    assert_eq!(split["range_count"], 2);
+    assert_eq!(split["is_contiguous"], false);
+    assert_eq!(
+        p.java("println(String.valueOf(getInstructionAt(toAddr(0x401012L))));"),
+        "null"
+    );
+    let independent = p.ok(&["function", "body", "0x401010"]);
+    assert_eq!(independent["ranges"], split["ranges"]);
+    p.stop();
+    assert_eq!(
+        p.ok(&["function", "body", "0x401010"])["ranges"],
+        split["ranges"]
+    );
+    // Visit both conditional paths, and terminate a closed loop without filling gaps.
+    p.java("currentProgram.getFunctionManager().removeFunction(toAddr(0x401010L)); clearListing(toAddr(0x401010L), toAddr(0x401018L)); setBytes(toAddr(0x401010L), new byte[]{0x75, 2, (byte)0x90, (byte)0xc3, (byte)0xc3});");
+    let conditional = p.ok(&["function", "prepare", "0x401010", "--max-bytes", "5"]);
+    assert_eq!(conditional["total_size"], 5);
+    assert_eq!(conditional["new_instruction_count"], 4);
+    p.java("currentProgram.getFunctionManager().removeFunction(toAddr(0x401010L)); clearListing(toAddr(0x401010L), toAddr(0x401014L)); setBytes(toAddr(0x401010L), new byte[]{(byte)0xeb, (byte)0xfe});");
+    let looping = p.ok(&["function", "prepare", "0x401010", "--max-bytes", "2"]);
+    assert_eq!(looping["total_size"], 2);
+    assert_eq!(looping["new_instruction_count"], 1);
 }

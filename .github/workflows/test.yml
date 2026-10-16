@@ -363,6 +363,10 @@ jobs:
             /projects discovery -import /binaries/discovery.elf -noanalysis
           python3 scripts/smoke-discovery.py --project /projects/discovery \
             -- docker exec ghidra-cli-ci ghidra-cli
+          docker exec ghidra-cli-ci /opt/ghidra/current/support/analyzeHeadless \
+            /projects preparation -import /binaries/discovery.elf -noanalysis
+          python3 scripts/smoke-prepare.py --project /projects/preparation \
+            -- docker exec ghidra-cli-ci ghidra-cli
           docker rm -f ghidra-cli-ci
           docker run -d --name ghidra-cli-ci --entrypoint sleep \
             -v "$PWD/runtime-projects:/projects" ghidra-cli:ci infinity

@@ -189,6 +189,21 @@ impl BridgeClient {
         )
     }
 
+    pub fn prepare_function(
+        &self,
+        address: &str,
+        name: Option<&str>,
+        end: Option<&str>,
+        max_bytes: Option<u32>,
+    ) -> Result<serde_json::Value> {
+        self.send_command(
+            "function_prepare",
+            Some(json!({
+                "address": address, "name": name, "end": end, "max_bytes": max_bytes,
+            })),
+        )
+    }
+
     pub fn function_candidates(
         &self,
         address: Option<&str>,
