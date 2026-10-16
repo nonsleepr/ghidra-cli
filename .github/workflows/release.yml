@@ -7,6 +7,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  GHIDRA_PROJECT_DIR: ${{ github.workspace }}/ghidra-projects
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   test:
@@ -43,16 +45,13 @@ jobs:
             ~/Library/Preferences/ghidra-cli
             ~/AppData/Local/ghidra-cli
             ~/AppData/Roaming/ghidra-cli
-          key: ghidra-${{ matrix.os }}-v5
+          key: ghidra-${{ matrix.os }}-${{ hashFiles('ghidra-version') }}-v7
 
       - name: Cache Ghidra projects
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/ghidra-cli/projects
-            ~/Library/Caches/ghidra-cli/projects
-            ~/AppData/Local/ghidra-cli/projects
-          key: ghidra-projects-${{ matrix.os }}-v4-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          path: ${{ github.workspace }}/ghidra-projects
+          key: ghidra-projects-${{ matrix.os }}-${{ hashFiles('ghidra-version') }}-v7-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -61,34 +60,26 @@ jobs:
         run: rustc --edition 2021 -o tests/fixtures/sample_binary tests/fixtures/sample_binary.rs
 
       - name: Setup Ghidra
-        run: |
-          DOCTOR_OUTPUT=$(cargo run -- doctor 2>&1 || true)
-          echo "$DOCTOR_OUTPUT"
-          if echo "$DOCTOR_OUTPUT" | grep -q "analyzeHeadless: OK"; then
-            echo "Ghidra already installed (cache hit), skipping setup"
-          else
-            echo "Ghidra not found, running setup..."
-            cargo run -- setup
-          fi
+        run: bash scripts/setup-ci.sh
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create test project
         run: |
-          cargo run -- import tests/fixtures/sample_binary --project ci-test --program sample_binary || true
-          cargo run -- analyze --project ci-test --program sample_binary || true
+          cargo run -- import tests/fixtures/sample_binary --project ci-test --program sample_binary
+          cargo run -- analyze --project ci-test --program sample_binary
         shell: bash
         timeout-minutes: 20
 
       - name: Run unit tests
-        run: cargo test --lib --verbose
+        run: cargo test --lib --verbose -- --test-threads=1
 
       - name: Run CLI tests
-        run: cargo test --test e2e --test output_format_integration --verbose
+        run: cargo test --test e2e --test doctor_tests --test output_format_integration --verbose -- --test-threads=1
 
       - name: Run read-only integration tests
-        run: cargo test --test readonly_tests --test command_tests --verbose -- --nocapture
+        run: cargo test --test readonly_tests --test command_tests --verbose -- --nocapture --test-threads=1
         timeout-minutes: 30
         env:
           RUST_LOG: info
@@ -98,7 +89,7 @@ jobs:
         shell: bash
 
       - name: Run mutation integration tests
-        run: cargo test --test comment_tests --test symbol_tests --test patch_tests --test type_tests --test script_tests --verbose -- --nocapture
+        run: cargo test --test comment_tests --test symbol_tests --test patch_tests --test type_tests --test script_tests --test signature_tests --test function_mutation_tests --verbose -- --nocapture --test-threads=1
         timeout-minutes: 30
         env:
           RUST_LOG: info
@@ -108,7 +99,7 @@ jobs:
         shell: bash
 
       - name: Run infrastructure tests
-        run: cargo test --test daemon_tests --test reliability_tests --test project_tests --verbose -- --nocapture
+        run: cargo test --test daemon_tests --test reliability_tests --test project_tests --verbose -- --nocapture --test-threads=1
         timeout-minutes: 30
         env:
           RUST_LOG: info
@@ -144,14 +135,14 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          tar -czvf ../../../ghidra-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz ghidra
+          tar -czvf ../../../ghidra-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz ghidra-cli
           cd ../../..
 
       - name: Create archive (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          7z a ../../../ghidra-cli-${{ github.ref_name }}-${{ matrix.target }}.zip ghidra.exe
+          7z a ../../../ghidra-cli-${{ github.ref_name }}-${{ matrix.target }}.zip ghidra-cli.exe
           cd ../../..
 
       - name: Upload artifact
@@ -175,7 +166,7 @@ jobs:
           path: artifacts
 
       - name: Create release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: artifacts/**/*

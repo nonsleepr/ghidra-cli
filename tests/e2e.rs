@@ -22,16 +22,23 @@ fn test_smoke() {
         .success()
         .stdout(predicate::str::contains("ghidra-cli"));
 
-    // Doctor command verifies installation
-    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
-        .arg("doctor")
-        .assert()
-        .success();
-
     // Config list should work
     assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
         .arg("config")
         .arg("list")
         .assert()
         .success();
+}
+
+/// Doctor must fail instead of claiming a nonexistent installation works.
+#[test]
+fn test_doctor_missing_installation() {
+    let temp = tempfile::tempdir().unwrap();
+    assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
+        .env("GHIDRA_INSTALL_DIR", temp.path().join("missing"))
+        .env("GHIDRA_CLI_CONFIG", temp.path().join("config.yaml"))
+        .arg("doctor")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("FAILED"));
 }

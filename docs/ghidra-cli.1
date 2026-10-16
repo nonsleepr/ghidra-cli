@@ -23,7 +23,7 @@ ghidra\-cli (Rust/clap)
 GhidraCliBridge.java  (GhidraScript inside analyzeHeadless JVM)
     |
     v
-Ghidra project  (~/.local/share/ghidra-projects/ by default)
+Ghidra project  (~/ghidra-projects/ by default)
 .EE
 .RE
 .PP
@@ -645,8 +645,8 @@ Set automatically by the Nix flake.
 .B GHIDRA_PROJECT_DIR
 Base directory for Ghidra projects.
 Default:
-.I ~/.local/share/ghidra-projects
-(Linux/macOS) or equivalent platform data dir.
+.I ~/ghidra-projects
+(under the user home directory).
 Note: Ghidra 12 rejects path components starting with
 .RB ` . ';
 avoid
@@ -773,3 +773,16 @@ the comment type always falls back to
 .BR "ghidra\-cli \-\-help" ,
 .BR "ghidra\-cli COMMAND \-\-help" ,
 .BR ghidra (1)
+
+.SH RUNTIME COMPATIBILITY
+The supported baseline is Ghidra 12.1.4 with JDK 21 (including javac).
+The doctor command exits nonzero if a required runtime component is unavailable.
+.PP
+script run accepts Java file paths and forwards arguments after --.
+script java wraps Java statements in a GhidraScript run() method; use fully
+qualified type names. Script results include stdout and stderr. Compilation
+or execution errors fail the command. Python execution is unsupported.
+.PP
+The default project directory is ~/ghidra-projects. Existing explicit settings
+are preserved; move old cache-based projects manually with their .gpr and .rep
+files together if changing directories.

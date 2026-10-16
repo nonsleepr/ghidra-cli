@@ -1235,7 +1235,7 @@ pub enum ScriptCommands {
     Run(ScriptRunArgs),
     /// Execute inline Python code
     Python(ScriptInlineArgs),
-    /// Execute inline Java code
+    /// Execute Java statements in a GhidraScript run() method (use fully qualified type names)
     Java(ScriptInlineArgs),
     /// List available scripts
     List,

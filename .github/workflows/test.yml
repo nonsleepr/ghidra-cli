@@ -44,10 +44,10 @@ jobs:
         run: rustc --edition 2021 -o tests/fixtures/sample_binary tests/fixtures/sample_binary.rs
 
       - name: Run unit tests
-        run: cargo test --lib --verbose
+        run: cargo test --lib --verbose -- --test-threads=1
 
       - name: Run CLI tests
-        run: cargo test --test e2e --test output_format_integration --verbose
+        run: cargo test --test e2e --test doctor_tests --test output_format_integration --verbose -- --test-threads=1
 
   # Job 2: Ghidra setup - installs Ghidra and creates test projects to seed caches.
   # This runs once per OS, then test jobs use the cached artifacts.
@@ -86,14 +86,14 @@ jobs:
             ~/Library/Preferences/ghidra-cli
             ~/AppData/Local/ghidra-cli
             ~/AppData/Roaming/ghidra-cli
-          key: ghidra-${{ matrix.os }}-v6
+          key: ghidra-${{ matrix.os }}-${{ hashFiles('ghidra-version') }}-v7
 
       - name: Cache Ghidra projects
         id: project-cache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/ghidra-projects
-          key: ghidra-projects-${{ matrix.os }}-v6-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          key: ghidra-projects-${{ matrix.os }}-${{ hashFiles('ghidra-version') }}-v7-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -102,69 +102,15 @@ jobs:
         run: rustc --edition 2021 -o tests/fixtures/sample_binary tests/fixtures/sample_binary.rs
 
       - name: Setup Ghidra (skip if cached)
-        run: |
-          DOCTOR_OUTPUT=$(cargo run -- doctor 2>&1 || true)
-          echo "$DOCTOR_OUTPUT"
-          if echo "$DOCTOR_OUTPUT" | grep -q "analyzeHeadless: OK"; then
-            echo "Ghidra already installed (cache hit), skipping setup"
-          else
-            echo "Ghidra not found, running setup..."
-            cargo run -- setup
-          fi
+        run: bash scripts/setup-ci.sh
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Ghidra native decompiler for macOS arm64 if missing
-        if: runner.os == 'macOS'
-        run: |
-          GHIDRA_BASE="$HOME/Library/Application Support/ghidra-cli/ghidra"
-          GHIDRA_DIR=$(ls -d "$GHIDRA_BASE"/ghidra_* 2>/dev/null | head -1)
-          if [ -z "$GHIDRA_DIR" ]; then
-            echo "No Ghidra installation found, skipping native build"
-            exit 0
-          fi
-          DECOMPILE_BIN="$GHIDRA_DIR/Ghidra/Features/Decompiler/os/mac_arm_64/decompile"
-          if [ -f "$DECOMPILE_BIN" ]; then
-            echo "mac_arm_64/decompile already present, skipping build"
-            exit 0
-          fi
-          echo "mac_arm_64/decompile not found — building from Ghidra source"
-          # Determine Ghidra version from application.properties
-          GHIDRA_VER=$(grep "^application.version=" "$GHIDRA_DIR/Ghidra/application.properties" | cut -d= -f2)
-          GHIDRA_TAG="Ghidra_${GHIDRA_VER}_build"
-          echo "Ghidra version: $GHIDRA_VER  tag: $GHIDRA_TAG"
-          # Sparse-clone just the decompiler C++ sources
-          BUILD_DIR=$(mktemp -d)
-          git clone --depth=1 --filter=blob:none --sparse \
-            "https://github.com/NationalSecurityAgency/ghidra.git" \
-            --branch "$GHIDRA_TAG" "$BUILD_DIR"
-          git -C "$BUILD_DIR" sparse-checkout set \
-            "Ghidra/Features/Decompiler/src/decompile/cpp"
-          CPP_DIR="$BUILD_DIR/Ghidra/Features/Decompiler/src/decompile/cpp"
-          cd "$CPP_DIR"
-          # Build ghidra_opt for arm64 using the Makefile with overridden arch/os settings
-          make ghidra_opt \
-            ARCH_TYPE="-arch arm64" \
-            ADDITIONAL_FLAGS="" \
-            OSDIR="mac_arm_64" \
-            CXX="clang++ -std=c++11"
-          # Install
-          mkdir -p "$(dirname "$DECOMPILE_BIN")"
-          cp "$CPP_DIR/ghidra_opt" "$DECOMPILE_BIN"
-          chmod +x "$DECOMPILE_BIN"
-          echo "Built and installed: $DECOMPILE_BIN"
-          file "$DECOMPILE_BIN"
-          ls -la "$GHIDRA_DIR/Ghidra/Features/Decompiler/os/"
-          # Cleanup
-          rm -rf "$BUILD_DIR"
-        shell: bash
-        timeout-minutes: 15
-
       - name: Create test project (skip if cached)
         run: |
-          cargo run -- import tests/fixtures/sample_binary --project ci-test --program sample_binary || true
-          cargo run -- analyze --project ci-test --program sample_binary || true
+          cargo run -- import tests/fixtures/sample_binary --project ci-test --program sample_binary
+          cargo run -- analyze --project ci-test --program sample_binary
         shell: bash
         timeout-minutes: 20
 
@@ -215,13 +161,13 @@ jobs:
             ~/Library/Preferences/ghidra-cli
             ~/AppData/Local/ghidra-cli
             ~/AppData/Roaming/ghidra-cli
-          key: ghidra-${{ matrix.os }}-v6
+          key: ghidra-${{ matrix.os }}-${{ hashFiles('ghidra-version') }}-v7
 
       - name: Restore Ghidra projects
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/ghidra-projects
-          key: ghidra-projects-${{ matrix.os }}-v6-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          key: ghidra-projects-${{ matrix.os }}-${{ hashFiles('ghidra-version') }}-v7-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -230,15 +176,7 @@ jobs:
         run: rustc --edition 2021 -o tests/fixtures/sample_binary tests/fixtures/sample_binary.rs
 
       - name: Setup Ghidra (fallback if cache missed)
-        run: |
-          DOCTOR_OUTPUT=$(cargo run -- doctor 2>&1 || true)
-          echo "$DOCTOR_OUTPUT"
-          if echo "$DOCTOR_OUTPUT" | grep -q "analyzeHeadless: OK"; then
-            echo "Ghidra already installed (cache hit)"
-          else
-            echo "Cache miss, running setup..."
-            cargo run -- setup
-          fi
+        run: bash scripts/setup-ci.sh
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -251,7 +189,7 @@ jobs:
         shell: bash
 
       - name: Run read-only integration tests
-        run: cargo test --test readonly_tests --test command_tests --verbose -- --nocapture
+        run: cargo test --test readonly_tests --test command_tests --verbose -- --nocapture --test-threads=1
         timeout-minutes: 80
         env:
           RUST_LOG: info
@@ -293,13 +231,13 @@ jobs:
             ~/Library/Preferences/ghidra-cli
             ~/AppData/Local/ghidra-cli
             ~/AppData/Roaming/ghidra-cli
-          key: ghidra-${{ matrix.os }}-v6
+          key: ghidra-${{ matrix.os }}-${{ hashFiles('ghidra-version') }}-v7
 
       - name: Restore Ghidra projects
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/ghidra-projects
-          key: ghidra-projects-${{ matrix.os }}-v6-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          key: ghidra-projects-${{ matrix.os }}-${{ hashFiles('ghidra-version') }}-v7-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -308,15 +246,7 @@ jobs:
         run: rustc --edition 2021 -o tests/fixtures/sample_binary tests/fixtures/sample_binary.rs
 
       - name: Setup Ghidra (fallback if cache missed)
-        run: |
-          DOCTOR_OUTPUT=$(cargo run -- doctor 2>&1 || true)
-          echo "$DOCTOR_OUTPUT"
-          if echo "$DOCTOR_OUTPUT" | grep -q "analyzeHeadless: OK"; then
-            echo "Ghidra already installed (cache hit)"
-          else
-            echo "Cache miss, running setup..."
-            cargo run -- setup
-          fi
+        run: bash scripts/setup-ci.sh
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -329,7 +259,7 @@ jobs:
         shell: bash
 
       - name: Run mutation integration tests
-        run: cargo test --test comment_tests --test symbol_tests --test patch_tests --test type_tests --test script_tests --verbose -- --nocapture
+        run: cargo test --test comment_tests --test symbol_tests --test patch_tests --test type_tests --test script_tests --test signature_tests --test function_mutation_tests --verbose -- --nocapture --test-threads=1
         timeout-minutes: 80
         env:
           RUST_LOG: info
@@ -371,13 +301,13 @@ jobs:
             ~/Library/Preferences/ghidra-cli
             ~/AppData/Local/ghidra-cli
             ~/AppData/Roaming/ghidra-cli
-          key: ghidra-${{ matrix.os }}-v6
+          key: ghidra-${{ matrix.os }}-${{ hashFiles('ghidra-version') }}-v7
 
       - name: Restore Ghidra projects
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/ghidra-projects
-          key: ghidra-projects-${{ matrix.os }}-v6-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
+          key: ghidra-projects-${{ matrix.os }}-${{ hashFiles('ghidra-version') }}-v7-${{ hashFiles('tests/fixtures/sample_binary.rs') }}
 
       - name: Build
         run: cargo build --verbose
@@ -386,15 +316,7 @@ jobs:
         run: rustc --edition 2021 -o tests/fixtures/sample_binary tests/fixtures/sample_binary.rs
 
       - name: Setup Ghidra (fallback if cache missed)
-        run: |
-          DOCTOR_OUTPUT=$(cargo run -- doctor 2>&1 || true)
-          echo "$DOCTOR_OUTPUT"
-          if echo "$DOCTOR_OUTPUT" | grep -q "analyzeHeadless: OK"; then
-            echo "Ghidra already installed (cache hit)"
-          else
-            echo "Cache miss, running setup..."
-            cargo run -- setup
-          fi
+        run: bash scripts/setup-ci.sh
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -407,7 +329,35 @@ jobs:
         shell: bash
 
       - name: Run infrastructure tests
-        run: cargo test --test daemon_tests --test reliability_tests --test project_tests --verbose -- --nocapture
+        run: cargo test --test daemon_tests --test reliability_tests --test project_tests --verbose -- --nocapture --test-threads=1
         timeout-minutes: 80
         env:
           RUST_LOG: info
+
+  docker-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build fixture
+        run: rustc --edition 2021 -o tests/fixtures/sample_binary tests/fixtures/sample_binary.rs
+      - name: Build pinned runtime
+        run: docker build -t ghidra-cli:ci .
+      - name: Test persistent container
+        run: |
+          mkdir -p runtime-projects
+          docker run -d --name ghidra-cli-ci --entrypoint sleep \
+            -v "$PWD/runtime-projects:/projects" \
+            -v "$PWD/tests/fixtures:/binaries:ro" \
+            -v "$PWD/tests/fixtures/runtime-scripts:/smoke:ro" ghidra-cli:ci infinity
+          python3 scripts/smoke-runtime.py --project /projects/smoke \
+            --fixture /binaries/sample_binary --script /smoke/RuntimeProbe.java \
+            -- docker exec ghidra-cli-ci ghidra-cli
+          docker rm -f ghidra-cli-ci
+          docker run -d --name ghidra-cli-ci --entrypoint sleep \
+            -v "$PWD/runtime-projects:/projects" ghidra-cli:ci infinity
+          docker exec ghidra-cli-ci ghidra-cli decompile add_numbers --project /projects/smoke --program sample_binary
+      - name: Cleanup
+        if: always()
+        run: docker rm -f ghidra-cli-ci

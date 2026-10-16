@@ -530,15 +530,7 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
     let project_from_cmd = extract_project_from_command(&cli.command);
     let project_path = resolve_project_path(&project_from_cmd, &config)?;
 
-    let ghidra_install_dir = config
-        .ghidra_install_dir
-        .clone()
-        .or_else(|| config.get_ghidra_install_dir().ok())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Ghidra installation directory not configured. Run 'ghidra setup' first."
-            )
-        })?;
+    let ghidra_install_dir = config.get_ghidra_install_dir()?;
 
     // Import and Quick produce their own result and don't need execute_via_bridge.
     // Other commands (including Analyze) produce a result via execute_via_bridge.
@@ -1094,7 +1086,15 @@ fn execute_via_bridge(
         Commands::Script(cmd) => {
             use cli::ScriptCommands;
             match cmd {
-                ScriptCommands::Run(args) => client.script_run(&args.script_path, &args.args),
+                ScriptCommands::Run(args) => {
+                    let path = std::path::Path::new(&args.script_path);
+                    let resolved = if path.exists() {
+                        dunce::canonicalize(path)?.to_string_lossy().into_owned()
+                    } else {
+                        args.script_path.clone()
+                    };
+                    client.script_run(&resolved, &args.args)
+                }
                 ScriptCommands::Python(args) => client.script_python(&args.code),
                 ScriptCommands::Java(args) => client.script_java(&args.code),
                 ScriptCommands::List => client.script_list(),
@@ -1196,15 +1196,7 @@ fn handle_bridge_start(project: Option<String>, program: Option<String>) -> anyh
     let config = Config::load()?;
     let project_path = resolve_project_path(&project, &config)?;
 
-    let ghidra_install_dir = config
-        .ghidra_install_dir
-        .clone()
-        .or_else(|| config.get_ghidra_install_dir().ok())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Ghidra installation directory not configured. Run 'ghidra setup' first."
-            )
-        })?;
+    let ghidra_install_dir = config.get_ghidra_install_dir()?;
 
     // Check if bridge is already running
     if bridge::is_bridge_running(&project_path).is_some() {
@@ -1309,7 +1301,7 @@ async fn run_setup(cli: Cli) -> anyhow::Result<()> {
     if !args.force {
         if let Err(e) = ghidra::setup::check_java_requirement() {
             eprintln!("Java prerequisite check failed: {}", e);
-            eprintln!("Ghidra requires JDK 17+. Use --force to continue anyway.");
+            eprintln!("Ghidra requires JDK 21+. Use --force to continue anyway.");
             std::process::exit(1);
         }
     } else {
@@ -1369,7 +1361,7 @@ fn handle_init() -> anyhow::Result<()> {
     let home = dirs::home_dir().ok_or_else(|| {
         GhidraError::ConfigError("Could not determine home directory".to_string())
     })?;
-    let project_dir = home.join(".ghidra-projects");
+    let project_dir = home.join("ghidra-projects");
     config.ghidra_project_dir = Some(project_dir.clone());
 
     println!("\nProject directory: {}", project_dir.display());
@@ -1387,83 +1379,81 @@ fn handle_init() -> anyhow::Result<()> {
 }
 
 fn handle_doctor() -> anyhow::Result<()> {
-    println!("Ghidra CLI Doctor");
-    println!("=================\n");
-
+    println!("Ghidra CLI Doctor\n=================\n");
     let config = Config::load()?;
-
-    // Check Ghidra installation
-    print!("Checking Ghidra installation... ");
-    match config.get_ghidra_install_dir() {
-        Ok(dir) => {
-            println!("OK");
-            println!("  Location: {}", dir.display());
-
-            let client = GhidraClient::new(config.clone());
-            match client {
-                Ok(c) => {
-                    if c.verify_installation().is_ok() {
-                        println!("  analyzeHeadless: OK");
-                    } else {
-                        println!("  analyzeHeadless: NOT FOUND");
-                    }
-                }
-                Err(e) => {
-                    println!("  Error: {}", e);
-                }
-            }
+    let mut failures = Vec::new();
+    let mut check = |name: &str, result: anyhow::Result<String>| match result {
+        Ok(detail) => println!("{}: OK ({})", name, detail),
+        Err(error) => {
+            println!("{}: FAILED ({:#})", name, error);
+            failures.push(name.to_string());
         }
-        Err(e) => {
-            println!("FAILED");
-            println!("  Error: {}", e);
-        }
+    };
+    let install = config.get_ghidra_install_dir();
+    check(
+        "Ghidra installation",
+        install
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .map_err(|e| anyhow::anyhow!("{}", e)),
+    );
+    let minimum = if let Ok(dir) = &install {
+        check(
+            "Ghidra version",
+            ghidra::setup::application_properties(dir).and_then(|p| {
+                p.get("application.version")
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("Version missing"))
+            }),
+        );
+        check(
+            "analyzeHeadless",
+            ghidra::bridge::find_headless_script(dir).and_then(|p| {
+                ghidra::setup::check_executable(&p)?;
+                Ok(p.display().to_string())
+            }),
+        );
+        check(
+            "Decompiler",
+            ghidra::setup::decompiler_path(dir).and_then(|p| {
+                ghidra::setup::check_executable(&p)?;
+                Ok(p.display().to_string())
+            }),
+        );
+        let minimum = ghidra::setup::required_java(dir);
+        check(
+            "Java requirement",
+            minimum
+                .as_ref()
+                .map(|v| format!("JDK {}+", v))
+                .map_err(|e| anyhow::anyhow!("{}", e)),
+        );
+        minimum.unwrap_or(21)
+    } else {
+        21
+    };
+    for tool in ["java", "javac"] {
+        check(
+            tool,
+            ghidra::setup::check_java_tool(tool, minimum).map(|v| format!("{}", v)),
+        );
     }
-
-    // Check Java
-    print!("\nChecking Java... ");
-    match ghidra::setup::check_java_requirement() {
-        Ok(()) => println!("OK (JDK 17+)"),
-        Err(e) => {
-            println!("FAILED");
-            println!("  Error: {}", e);
-        }
+    check(
+        "Project directory",
+        config
+            .get_project_dir()
+            .map(|p| p.display().to_string())
+            .map_err(Into::into),
+    );
+    check(
+        "Config file",
+        Config::config_path()
+            .map(|p| p.display().to_string())
+            .map_err(Into::into),
+    );
+    if !failures.is_empty() {
+        anyhow::bail!("Required checks failed: {}", failures.join(", "));
     }
-
-    // Check project directory
-    print!("\nChecking project directory... ");
-    match config.get_project_dir() {
-        Ok(dir) => {
-            println!("OK");
-            println!("  Location: {}", dir.display());
-            println!(
-                "  Exists: {}",
-                if dir.exists() {
-                    "yes"
-                } else {
-                    "no (will be created)"
-                }
-            );
-        }
-        Err(e) => {
-            println!("FAILED");
-            println!("  Error: {}", e);
-        }
-    }
-
-    // Check config file
-    print!("\nConfig file... ");
-    match Config::config_path() {
-        Ok(path) => {
-            println!("OK");
-            println!("  Location: {}", path.display());
-            println!("  Exists: {}", if path.exists() { "yes" } else { "no" });
-        }
-        Err(e) => {
-            println!("FAILED");
-            println!("  Error: {}", e);
-        }
-    }
-
     println!("\nDone!");
     Ok(())
 }

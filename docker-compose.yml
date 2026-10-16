@@ -5,9 +5,9 @@
 #
 # Usage:
 #   docker compose up -d
-#   docker compose exec ghidra-cli ghidra-cli import /binaries/app --project myproject --program app
-#   docker compose exec ghidra-cli ghidra-cli analyze --project myproject --program app
-#   docker compose exec ghidra-cli ghidra-cli function list --project myproject --program app
+#   docker compose exec ghidra-cli ghidra-cli import /binaries/app --project /projects/myproject --program app
+#   docker compose exec ghidra-cli ghidra-cli analyze --project /projects/myproject --program app
+#   docker compose exec ghidra-cli ghidra-cli function list --project /projects/myproject --program app
 #   docker compose down   # stops the bridge along with the container
 services:
   ghidra-cli:
@@ -16,5 +16,5 @@ services:
     entrypoint: ["sleep", "infinity"]
     volumes:
       - ./projects:/projects
-      - ./binaries:/binaries
+      - ./binaries:/binaries:ro
     working_dir: /work

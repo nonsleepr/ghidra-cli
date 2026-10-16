@@ -85,6 +85,12 @@ public class GhidraCliBridge extends GhidraScript {
         }
         String portFilePath = scriptArgs[0];
 
+        // GhidraScript.execute() starts a transaction before calling run(). A
+        // transaction spanning this server's lifetime makes command transactions
+        // nested: aborts would remain visible until shutdown and poison earlier
+        // edits. Each mutating handler must own its independent transaction.
+        end(true);
+
         // Bind to dynamic port on localhost only.
         // Backlog of 50 lets many concurrent agents queue connections while one
         // is being served (the accept loop is intentionally single-threaded to
@@ -1307,8 +1313,16 @@ public class GhidraCliBridge extends GhidraScript {
         try {
             TaskMonitor mon = new ConsoleTaskMonitor();
 
-            // Use GhidraScript's built-in analyzeAll which works across Ghidra versions
-            analyzeAll(currentProgram);
+            // Analysis mutates options and listing data. Since the bridge no
+            // longer keeps a session-wide transaction, analysis owns one too.
+            int txId = currentProgram.startTransaction("Analyze program");
+            boolean commit = false;
+            try {
+                analyzeAll(currentProgram);
+                commit = true;
+            } finally {
+                currentProgram.endTransaction(txId, commit);
+            }
 
             // Save the program
             try {
@@ -2615,25 +2629,26 @@ public class GhidraCliBridge extends GhidraScript {
             Function func = findFunctionByNameOrAddress(target);
             if (func == null) return errorResult(buildFunctionTargetHint(target));
 
-            // Parse the signature using Ghidra's C parser
-            // Note: parseSignature no longer accepts GhidraScript as ServiceProvider in Ghidra 12+
-            ghidra.program.model.data.FunctionDefinitionDataType funcDef =
-                ghidra.app.util.cparser.C.CParserUtils.parseSignature(
-                    (ghidra.framework.plugintool.ServiceProvider) null, currentProgram, sigStr);
-
-            if (funcDef == null) {
-                return errorResult("Failed to parse signature: " + sigStr);
-            }
-
             int txId = currentProgram.startTransaction("Set function signature");
+            boolean commit = false;
             try {
+                // A null ServiceProvider is invalid. This overload resolves program-local
+                // types and throws parsing errors instead of displaying GUI dialogs.
+                FunctionDefinitionDataType funcDef =
+                    ghidra.app.util.cparser.C.CParserUtils.parseSignature(
+                        (ghidra.app.services.DataTypeManagerService) null,
+                        currentProgram, sigStr, false);
+                if (funcDef == null) {
+                    return errorResult("Failed to parse signature: " + sigStr);
+                }
                 ApplyFunctionSignatureCmd cmd = new ApplyFunctionSignatureCmd(
                     func.getEntryPoint(), funcDef, SourceType.USER_DEFINED);
-                cmd.applyTo(currentProgram);
-                currentProgram.endTransaction(txId, true);
-            } catch (Exception e) {
-                currentProgram.endTransaction(txId, false);
-                throw e;
+                if (!cmd.applyTo(currentProgram, monitor)) {
+                    return errorResult("Failed to apply signature: " + cmd.getStatusMsg());
+                }
+                commit = true;
+            } finally {
+                currentProgram.endTransaction(txId, commit);
             }
 
             String newSig = null;
@@ -2647,7 +2662,7 @@ public class GhidraCliBridge extends GhidraScript {
                 result.addProperty("signature", newSig);
             }
             return result;
-        } catch (Exception e) {
+        } catch (Exception | ghidra.app.util.cparser.C.TokenMgrError e) {
             return errorResult("Failed to set signature: " + e.getMessage());
         }
     }
@@ -4181,27 +4196,112 @@ public class GhidraCliBridge extends GhidraScript {
     // --- Script Handlers ---
 
     private JsonObject handleScriptRun(JsonObject args) {
-        String scriptPath = getArgString(args, "path");
-        if (scriptPath == null) return errorResult("Script path required");
-
+        String path = getArgString(args, "path");
+        if (path == null) return errorResult("Script path required");
         try {
-            File scriptFile = new File(scriptPath);
-            if (!scriptFile.exists()) return errorResult("Script not found: " + scriptPath);
-
-            // Use GhidraScript's runScript method
-            runScript(scriptPath);
-
-            JsonObject result = new JsonObject();
-            result.addProperty("status", "executed");
-            result.addProperty("script", scriptPath);
-            return result;
+            File file = new File(path);
+            generic.jar.ResourceFile source = file.isFile()
+                ? new generic.jar.ResourceFile(file.getCanonicalFile())
+                : ghidra.app.script.GhidraScriptUtil.findScriptByName(path);
+            if (source == null || !source.isFile()) return errorResult("Script not found: " + path);
+            String[] scriptArgs = new String[0];
+            if (args.has("args")) {
+                JsonArray array = args.getAsJsonArray("args");
+                scriptArgs = new String[array.size()];
+                for (int i = 0; i < array.size(); i++) scriptArgs[i] = array.get(i).getAsString();
+            }
+            return executeScript(source, scriptArgs);
         } catch (Exception e) {
             return errorResult("Failed to run script: " + e.getMessage());
         }
     }
 
+    // Load an exact ResourceFile rather than passing an absolute path to
+    // runScript(), which searches by name. Source registration also enables
+    // compiling helpers alongside a script outside the default directories.
+    private JsonObject executeScript(generic.jar.ResourceFile source, String[] args) {
+        StringWriter output = new StringWriter();
+        StringWriter errors = new StringWriter();
+        PrintWriter out = new PrintWriter(output, true);
+        PrintWriter err = new PrintWriter(errors, true);
+        // Ghidra's generated manifest already imports its OSGi package. Direct
+        // references here cause a duplicate Import-Package entry in Ghidra 12.1.4.
+        Object host;
+        try { host = ghidra.app.script.GhidraScriptUtil.class.getMethod("getBundleHost").invoke(null); }
+        catch (ReflectiveOperationException e) { return errorResult("Cannot access script bundle host: " + e); }
+        generic.jar.ResourceFile directory = source.getParentFile();
+        boolean registered = !ghidra.app.script.GhidraScriptUtil.getScriptSourceDirectories().contains(directory);
+        Object addedBundle = null;
+        try {
+            if (registered) addedBundle = host.getClass().getMethod("add",
+                generic.jar.ResourceFile.class, boolean.class, boolean.class).invoke(host, directory, true, false);
+            ghidra.app.script.GhidraScriptProvider provider = ghidra.app.script.GhidraScriptUtil.getProvider(source);
+            if (provider == null) throw new IOException("Unsupported script type: " + source.getName());
+            GhidraScript script = provider.getScriptInstance(source, err);
+            if (script == null) throw new IOException("Could not load script: " + source.getName());
+            script.setScriptArgs(args);
+            // Use a fresh state so stale parent-script state cannot switch the
+            // active program after the bridge has opened another program.
+            ghidra.app.script.GhidraState scriptState = new ghidra.app.script.GhidraState(
+                state.getTool(), state.getProject(), currentProgram,
+                currentLocation, currentSelection, currentHighlight);
+            int tx = currentProgram.startTransaction("Run " + source.getName());
+            boolean commit = false;
+            try {
+                script.execute(scriptState, new ghidra.app.script.ScriptControls(out, err, monitor));
+                commit = true;
+            } finally {
+                currentProgram.endTransaction(tx, commit);
+            }
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "executed");
+            result.addProperty("script", source.getAbsolutePath());
+            result.addProperty("stdout", output.toString());
+            result.addProperty("stderr", errors.toString());
+            return result;
+        } catch (Exception | LinkageError | AssertionError e) {
+            return errorResult("Failed to run script: " + e.getMessage() + "\n" + errors + output);
+        } finally {
+            if (addedBundle != null) {
+                try {
+                    String location = (String) addedBundle.getClass().getMethod("getLocationIdentifier").invoke(addedBundle);
+                    host.getClass().getMethod("deactivateSynchronously", String.class).invoke(host, location);
+                } catch (Exception e) { printerr("Script bundle cleanup: " + e.getMessage()); }
+                try { host.getClass().getMethod("remove", generic.jar.ResourceFile.class).invoke(host, directory); }
+                catch (Exception e) { printerr("Script source cleanup: " + e.getMessage()); }
+            }
+            out.close();
+            err.close();
+        }
+    }
+
     private JsonObject handleScriptJava(JsonObject args) {
-        return errorResult("Inline Java execution not supported in bridge mode");
+        String code = getArgString(args, "code");
+        if (code == null) return errorResult("Java code required");
+        java.nio.file.Path directory = null;
+        try {
+            directory = java.nio.file.Files.createTempDirectory("ghidra-cli-inline-");
+            String className = "GhidraCliInline" + java.util.UUID.randomUUID().toString().replace("-", "");
+            java.nio.file.Path source = directory.resolve(className + ".java");
+            java.nio.file.Files.writeString(source,
+                "import ghidra.app.script.GhidraScript;\npublic class " + className +
+                " extends GhidraScript { public void run() throws Exception {\n" + code + "\n} }\n");
+            JsonObject result = executeScript(new generic.jar.ResourceFile(source.toFile()), new String[0]);
+            result.remove("script");
+            result.addProperty("language", "java");
+            return result;
+        } catch (Exception e) {
+            return errorResult("Failed to execute Java: " + e.getMessage());
+        } finally {
+            if (directory != null) {
+                try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(directory)) {
+                    paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                        try { java.nio.file.Files.deleteIfExists(path); }
+                        catch (IOException e) { printerr("Inline cleanup: " + e.getMessage()); }
+                    });
+                } catch (IOException e) { printerr("Inline cleanup: " + e.getMessage()); }
+            }
+        }
     }
 
     private JsonObject handleScriptPython(JsonObject args) {

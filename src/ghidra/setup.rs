@@ -22,44 +22,129 @@ struct GithubRelease {
     assets: Vec<GithubAsset>,
 }
 
-/// Check if Java is installed and meets the minimum version requirement (JDK 17+).
-pub fn check_java_requirement() -> Result<()> {
-    use std::process::Command;
+/// Normalize a version or release tag to Ghidra's canonical GitHub tag.
+pub fn release_tag(version: &str) -> Result<String> {
+    let version = version
+        .trim()
+        .strip_prefix("Ghidra_")
+        .unwrap_or(version.trim());
+    let version = version.strip_suffix("_build").unwrap_or(version);
+    if !regex::Regex::new(r"^\d+\.\d+(?:\.\d+)?$")?.is_match(version) {
+        return Err(anyhow!("Invalid Ghidra version: {}", version));
+    }
+    Ok(format!("Ghidra_{}_build", version))
+}
 
-    let output = Command::new("java")
+pub fn application_properties(dir: &Path) -> Result<std::collections::HashMap<String, String>> {
+    let path = dir.join("Ghidra/application.properties");
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("Cannot read {}", path.display()))?;
+    Ok(text
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect())
+}
+
+pub fn required_java(dir: &Path) -> Result<u32> {
+    application_properties(dir)?
+        .get("application.java.min")
+        .ok_or_else(|| anyhow!("application.java.min missing"))?
+        .parse()
+        .context("Invalid application.java.min")
+}
+
+fn java_major(text: &str) -> Result<u32> {
+    let re = regex::Regex::new(r#"(?:version\s+"|javac\s+)(\d+)(?:\.(\d+))?"#)?;
+    let caps = re
+        .captures(text)
+        .ok_or_else(|| anyhow!("Cannot parse Java version: {}", text.trim()))?;
+    let first: u32 = caps[1].parse()?;
+    if first == 1 {
+        return caps
+            .get(2)
+            .ok_or_else(|| anyhow!("Invalid legacy Java version"))?
+            .as_str()
+            .parse()
+            .context("Invalid Java version");
+    }
+    Ok(first)
+}
+
+pub fn check_java_tool(tool: &str, minimum: u32) -> Result<u32> {
+    let executable = std::env::var_os("JAVA_HOME_OVERRIDE")
+        .or_else(|| std::env::var_os("JAVA_HOME"))
+        .map(|home| {
+            PathBuf::from(home).join("bin").join(format!(
+                "{}{}",
+                tool,
+                std::env::consts::EXE_SUFFIX
+            ))
+        })
+        .unwrap_or_else(|| PathBuf::from(tool));
+    let output = std::process::Command::new(&executable)
         .arg("-version")
         .output()
-        .context("Failed to execute 'java -version'. Is Java installed and in PATH?")?;
-
-    // Java outputs version info to stderr
-    let version_output = String::from_utf8_lossy(&output.stderr);
-
-    // Look for version pattern like "17.0.x" or "21.0.x" in the output
-    // Java version string format is usually: 'java version "17.0.1"' or 'openjdk version "17.0.1"'
-    if version_output.is_empty() {
-        return Err(anyhow!("Could not determine Java version"));
+        .with_context(|| format!("Failed to execute {}", executable.display()))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "{} -version failed: {}",
+            executable.display(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let major = java_major(&text)?;
+    if major < minimum {
+        return Err(anyhow!(
+            "{} {} detected, but Ghidra requires JDK {} or higher",
+            tool,
+            major,
+            minimum
+        ));
+    }
+    Ok(major)
+}
 
-    // Extract version number
-    let version_regex = regex::Regex::new(r#"version "(\d+)"#)?;
-    if let Some(captures) = version_regex.captures(&version_output) {
-        if let Some(major_version) = captures.get(1) {
-            let major: u32 = major_version.as_str().parse().unwrap_or(0);
-            if major >= 17 {
-                println!("✓ Java {} detected", major);
-                return Ok(());
-            } else {
-                return Err(anyhow!(
-                    "Java {} detected, but Ghidra requires JDK 17 or higher",
-                    major
-                ));
-            }
+/// Setup defaults to the supported release's JDK minimum.
+pub fn check_java_requirement() -> Result<()> {
+    check_java_tool("java", 21)?;
+    check_java_tool("javac", 21)?;
+    Ok(())
+}
+
+pub fn decompiler_path(dir: &Path) -> Result<PathBuf> {
+    let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "linux_x86_64",
+        ("linux", "aarch64") => "linux_arm_64",
+        ("macos", "x86_64") => "mac_x86_64",
+        ("macos", "aarch64") => "mac_arm_64",
+        ("windows", "x86_64") => "win_x86_64",
+        pair => return Err(anyhow!("Unsupported decompiler platform: {:?}", pair)),
+    };
+    Ok(dir
+        .join("Ghidra/Features/Decompiler/os")
+        .join(platform)
+        .join(format!("decompile{}", std::env::consts::EXE_SUFFIX)))
+}
+
+pub fn check_executable(path: &Path) -> Result<()> {
+    let metadata =
+        std::fs::metadata(path).with_context(|| format!("Not found: {}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(anyhow!("Not a file: {}", path.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err(anyhow!("Not executable: {}", path.display()));
         }
     }
-
-    // Fallback: if we got output but couldn't parse, warn but continue
-    println!("⚠ Could not parse Java version, but Java appears installed");
-    println!("  Output: {}", version_output.lines().next().unwrap_or(""));
     Ok(())
 }
 
@@ -82,9 +167,10 @@ pub async fn resolve_version_url(version: Option<String>) -> Result<(String, Str
 
     let release: GithubRelease = if let Some(ver) = version {
         // Fetch specific version
+        let tag = release_tag(&ver)?;
         let url = format!(
-            "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/tags/Ghidra_{}",
-            ver
+            "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/tags/{}",
+            tag
         );
         println!("Fetching release info for Ghidra {}...", ver);
         client
@@ -265,6 +351,25 @@ pub async fn install_ghidra(version: Option<String>, target_dir: PathBuf) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_tags() {
+        for input in ["12.1.4", "12.1.4_build", "Ghidra_12.1.4_build"] {
+            assert_eq!(release_tag(input).unwrap(), "Ghidra_12.1.4_build");
+        }
+        assert_eq!(release_tag("12.1").unwrap(), "Ghidra_12.1_build");
+        for input in ["", "latest", "../12.1", "12.1/build"] {
+            assert!(release_tag(input).is_err());
+        }
+    }
+
+    #[test]
+    fn java_versions() {
+        assert_eq!(java_major("openjdk version \"21.0.12\"").unwrap(), 21);
+        assert_eq!(java_major("javac 21.0.12").unwrap(), 21);
+        assert_eq!(java_major("java version \"1.8.0\"").unwrap(), 8);
+        assert!(java_major("unrecognized").is_err());
+    }
 
     #[test]
     fn test_check_java_fails_gracefully() {

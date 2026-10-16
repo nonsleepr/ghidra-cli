@@ -30,6 +30,7 @@ RUN touch src/main.rs src/lib.rs \
 FROM eclipse-temurin:21-jdk-jammy AS runtime
 
 ARG GHIDRA_VERSION=
+COPY ghidra-version /opt/ghidra-version
 
 # `analyzeHeadless` passes -Djava.awt.headless=true, but Ghidra's own startup
 # path still ends up loading the full X11 AWT toolkit (libawt_xawt.so, not
@@ -50,14 +51,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /src/target/release/ghidra-cli /usr/local/bin/ghidra-cli
 
-# Bake the latest (or pinned, via --build-arg GHIDRA_VERSION) Ghidra release
+# Bake the pinned (or overridden, via --build-arg GHIDRA_VERSION) Ghidra release
 # into the image using the CLI's own installer, so the image doesn't depend on
 # any third-party Ghidra distribution. Optionally pass a token to avoid
 # GitHub's 60 req/hour unauthenticated API limit:
 #   docker build --secret id=github_token,env=GITHUB_TOKEN .
 RUN --mount=type=secret,id=github_token \
     if [ -s /run/secrets/github_token ]; then export GITHUB_TOKEN="$(cat /run/secrets/github_token)"; fi \
-    && ghidra-cli setup --dir /opt/ghidra ${GHIDRA_VERSION:+--version "$GHIDRA_VERSION"} \
+    && ghidra-cli setup --dir /opt/ghidra --version "${GHIDRA_VERSION:-$(cat /opt/ghidra-version)}" \
     && ln -s "$(find /opt/ghidra -maxdepth 1 -name 'ghidra_*' -type d)" /opt/ghidra/current
 
 ENV GHIDRA_INSTALL_DIR=/opt/ghidra/current

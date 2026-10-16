@@ -59,12 +59,8 @@ pub fn ensure_test_project(project: &str, program: &str) {
         let gpr_file = projects_dir.join(format!("{}.gpr", project));
         let rep_dir = projects_dir.join(format!("{}.rep", project));
 
-        // Validate project has actual program data, not just metadata stubs.
-        // On macOS, Ghidra's project close (during `ghidra stop`) can truncate
-        // .gpr to 0 bytes and leave .rep with only metadata stubs (~index.dat,
-        // project.prp) but no actual program data. A valid project needs:
-        //   .gpr - non-empty project descriptor (XML)
-        //   .rep/idata/ - must contain more than just ~index.dat (needs 00/ subdirectories)
+        // Ghidra 12.1.4 uses an empty .gpr marker even for healthy projects.
+        // Validate the actual repository data instead of the marker's length.
         let idata_dir = rep_dir.join("idata");
         let idata_has_data = idata_dir.is_dir()
             && std::fs::read_dir(&idata_dir)
@@ -74,9 +70,7 @@ pub fn ensure_test_project(project: &str, program: &str) {
                         .any(|e| e.file_name() != "~index.dat")
                 })
                 .unwrap_or(false);
-        let project_valid = gpr_file.exists()
-            && gpr_file.metadata().map(|m| m.len() > 0).unwrap_or(false)
-            && idata_has_data;
+        let project_valid = gpr_file.is_file() && idata_has_data;
 
         if project_valid {
             eprintln!("=== Using cached test project: {:?} ===", gpr_file);
@@ -114,17 +108,8 @@ pub fn ensure_test_project(project: &str, program: &str) {
             ],
             Duration::from_secs(600),
         );
-        match import_status {
-            Ok(status) => {
-                eprintln!("Import finished with status: {}", status);
-                if !status.success() {
-                    eprintln!("Warning: Import may have failed, but continuing...");
-                } else {
-                    eprintln!("Binary imported successfully");
-                }
-            }
-            Err(e) => eprintln!("Import error: {}", e),
-        }
+        let status = import_status.expect("Import failed to complete");
+        assert!(status.success(), "Import failed: {}", status);
 
         // Step 2: Analyze the binary (creates code units needed for comments)
         eprintln!("Step 2: Running analysis...");
@@ -139,23 +124,12 @@ pub fn ensure_test_project(project: &str, program: &str) {
             ],
             Duration::from_secs(600),
         );
-        match analyze_status {
-            Ok(status) => {
-                eprintln!("Analyze finished with status: {}", status);
-                if !status.success() {
-                    eprintln!("Warning: Analyze may have failed, but continuing...");
-                } else {
-                    eprintln!("Analysis complete");
-                }
-            }
-            Err(e) => eprintln!("Analyze error: {}", e),
-        }
+        let status = analyze_status.expect("Analyze failed to complete");
+        assert!(status.success(), "Analyze failed: {}", status);
 
-        // NOTE: We intentionally do NOT stop the bridge here.
-        // On macOS, stopping the bridge triggers Ghidra's project close which
-        // can truncate .gpr to 0 bytes and destroy project data. Instead, we
-        // leave the bridge running. DaemonTestHarness::new() will detect the
-        // existing bridge via ensure_bridge_running() and reuse it.
+        // Reuse the live bridge during this suite. DaemonTestHarness::new()
+        // detects it via ensure_bridge_running(). Empty .gpr markers are valid;
+        // project validity is determined by repository data above.
 
         eprintln!("=== Test project setup complete ===");
     });
@@ -190,9 +164,7 @@ impl DaemonTestHarness {
             .context("Could not determine project directory")?
             .join(project);
         let ghidra_install_dir = config
-            .ghidra_install_dir
-            .clone()
-            .or_else(|| config.get_ghidra_install_dir().ok())
+            .get_ghidra_install_dir()
             .context("Ghidra installation directory not configured")?;
 
         // Start the bridge directly via bridge API (not CLI subprocess).
@@ -344,7 +316,7 @@ macro_rules! require_ghidra {
 
         let output = String::from_utf8_lossy(&doctor.stdout);
 
-        if !output.contains("OK") || output.contains("NOT FOUND") || output.contains("FAILED") {
+        if !doctor.status.success() {
             panic!(
                 "Ghidra not properly installed — tests MUST fail without Ghidra.\n\
                  Doctor output: {}",

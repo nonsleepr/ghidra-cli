@@ -14,17 +14,26 @@
 
   outputs = { self, nixpkgs, rust-overlay, crane }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      ghidraVersion = nixpkgs.lib.removeSuffix "\n" (builtins.readFile ./ghidra-version);
+      systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
+      pkgsFor = system: import nixpkgs {
+        inherit system;
+        overlays = [ rust-overlay.overlays.default ];
+      };
+      ghidraFor = pkgs: system:
+        let
+          # The upstream ZIP only supplies Linux x86_64 and Windows natives.
+          # Build the native decompiler for Linux ARM and Apple Silicon.
+          package = if system == "x86_64-linux" then pkgs.ghidra-bin else pkgs.ghidra;
+        in assert package.version == ghidraVersion; package;
     in
     {
       packages = forAllSystems (system:
         let
-          pkgs = import nixpkgs {
-            inherit system;
-            overlays = [ rust-overlay.overlays.default ];
-          };
+          pkgs = pkgsFor system;
           lib = pkgs.lib;
+          ghidra = ghidraFor pkgs system;
           rustToolchain = pkgs.rust-bin.stable.latest.default;
           craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
@@ -42,8 +51,6 @@
               pkgs.openssl
             ] ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv
-              pkgs.darwin.apple_sdk.frameworks.Security
-              pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
             ];
             nativeBuildInputs = [ pkgs.pkg-config ];
           };
@@ -54,7 +61,7 @@
             inherit cargoArtifacts;
             doCheck = false;
             postInstall = ''
-              installManPage docs/ghidra-cli.1
+              install -Dm644 docs/ghidra-cli.1 "$out/share/man/man1/ghidra-cli.1"
             '';
           });
 
@@ -64,8 +71,9 @@
             buildInputs = [ pkgs.makeWrapper ];
             postBuild = ''
               wrapProgram $out/bin/ghidra-cli \
-                --set GHIDRA_INSTALL_DIR "${pkgs.ghidra}/lib/ghidra" \
-                --prefix PATH : "${pkgs.jdk}/bin"
+                --set-default GHIDRA_INSTALL_DIR "${ghidra}/lib/ghidra" \
+                --set-default JAVA_HOME "${pkgs.jdk21}" \
+                --prefix PATH : "${pkgs.jdk21}/bin"
             '';
           };
         in
@@ -76,11 +84,9 @@
 
       devShells = forAllSystems (system:
         let
-          pkgs = import nixpkgs {
-            inherit system;
-            overlays = [ rust-overlay.overlays.default ];
-          };
+          pkgs = pkgsFor system;
           lib = pkgs.lib;
+          ghidra = ghidraFor pkgs system;
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
             extensions = [ "rust-src" "rust-analyzer" "clippy" "rustfmt" ];
           };
@@ -91,15 +97,13 @@
               rustToolchain
               pkgs.openssl
               pkgs.pkg-config
-              pkgs.ghidra
-              pkgs.jdk
+              ghidra
+              pkgs.jdk21
             ] ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv
-              pkgs.darwin.apple_sdk.frameworks.Security
-              pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
             ];
             shellHook = ''
-              export GHIDRA_INSTALL_DIR="${pkgs.ghidra}/lib/ghidra"
+              export GHIDRA_INSTALL_DIR="''${GHIDRA_INSTALL_DIR:-${ghidra}/lib/ghidra}"
             '';
           };
         });

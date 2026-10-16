@@ -97,12 +97,11 @@ impl Config {
             return Ok(dir.clone());
         }
 
-        // Default to cache dir (e.g., ~/.cache/ghidra-cli/projects)
-        let cache_dir = dirs::cache_dir().ok_or_else(|| {
-            GhidraError::ConfigError("Could not determine cache directory".to_string())
+        // Ghidra 12 rejects hidden project path components such as ~/.cache.
+        let home = dirs::home_dir().ok_or_else(|| {
+            GhidraError::ConfigError("Could not determine home directory".to_string())
         })?;
-
-        Ok(cache_dir.join("ghidra-cli").join("projects"))
+        Ok(home.join("ghidra-projects"))
     }
 
     #[cfg(target_os = "windows")]

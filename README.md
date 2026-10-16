@@ -77,8 +77,8 @@ docker run --rm -v "$PWD/projects:/projects" -v "$PWD/binaries:/binaries" \
   ghidra-cli import /binaries/app --project myproject --program app
 ```
 
-Pin a specific Ghidra version instead of the latest release with
-`docker build --build-arg GHIDRA_VERSION=12.1.2 -t ghidra-cli .`.
+Docker uses the checked-in Ghidra version pin. Override it with
+`docker build --build-arg GHIDRA_VERSION=12.1.4 -t ghidra-cli .`.
 
 ### Nix Flake
 
@@ -103,7 +103,7 @@ cargo install --path .
 Not applicable if you're using Docker — the image already bundles all of this.
 
 - **Ghidra 12.0+** - Download from [ghidra-sre.org](https://ghidra-sre.org)
-- **Java 17+** - Required by Ghidra
+- **JDK 21+** - Required by Ghidra
 - **Rust 1.70+** - For building from source
 
 Set the Ghidra installation path:
@@ -351,7 +351,7 @@ sudo dnf install libXtst
 
 #### Java Version Issues
 
-Ghidra requires JDK 17 or higher (not just JRE):
+The pinned Ghidra release requires JDK 21 or higher (including `javac`):
 
 ```bash
 # Arch Linux
@@ -361,7 +361,8 @@ sudo pacman -S jdk21-openjdk
 sudo apt install openjdk-21-jdk
 
 # Verify installation
-java -version  # Should show 17+ and include "JDK"
+java -version  # Should show 21+
+javac -version # Required for compiling Java scripts
 ```
 
 #### WSL-Specific Notes
@@ -381,14 +382,70 @@ ghidra-cli doctor
 ```
 
 This checks:
-- Ghidra installation directory
-- analyzeHeadless availability
+- Ghidra installation directory and version
+- analyzeHeadless and platform decompiler availability
+- Java runtime and compiler against Ghidra's minimum version
 - Project directory configuration
 - Config file status
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
+
+## Runtime compatibility and repairs
+
+Docker, the Nix package/development shell, and CI use Ghidra **12.1.4**, pinned by
+`ghidra-version`, with **JDK 21**. `setup --version` accepts `12.1.4`,
+`12.1.4_build`, or `Ghidra_12.1.4_build`; unversioned `setup` still selects the
+latest upstream release. Docker accepts `--build-arg GHIDRA_VERSION=...`.
+`doctor` reports the selected Ghidra version, Java runtime/compiler, headless
+launcher and platform decompiler, and exits nonzero when a required check fails.
+
+Nix outputs cover Linux x86_64/ARM64 and Apple Silicon. The updated nixpkgs no
+longer supports Intel macOS; use a Cargo build and an externally installed
+Ghidra/JDK there. Non-x86 Linux/macOS Nix packages build Ghidra native components
+from source because the upstream ZIP does not include them. Docker validation
+here targets Linux x86_64.
+
+For NixOS, build/install the wrapped package instead of copying a Cargo executable
+or writing store paths into a launcher. A user profile keeps its dependency
+closure alive across garbage collection:
+
+```sh
+mkdir -p "$HOME/.local/state/ghidra-cli"
+nix profile install --profile "$HOME/.local/state/ghidra-cli/profile" .#default
+"$HOME/.local/state/ghidra-cli/profile/bin/ghidra-cli" doctor
+```
+
+The wrapper defaults to the packaged Ghidra and JDK; explicit
+`GHIDRA_INSTALL_DIR`, `JAVA_HOME`, and `JAVA_HOME_OVERRIDE` take precedence.
+Projects now default to `~/ghidra-projects`. Existing explicit project settings
+are preserved. If you used the old cache-based default, move each project's
+`.gpr` and matching `.rep` together to the new directory, or keep using an
+explicit compatible project directory. No existing projects are moved automatically.
+
+`function set-signature TARGET --signature 'int name(int a, int b)'` resolves
+program-defined types without GUI services, rolls back failed edits, and reports
+the applied prototype. Existing non-default names are retained.
+
+`script run PATH --project PROJECT --program PROGRAM -- ARG...` supports Java
+files outside Ghidra's default script directories, including neighboring helper
+classes. Relative paths are resolved from the CLI's working directory; bare
+filenames can resolve through Ghidra's registered script directories. In Docker,
+use container-visible paths and mount the script directory read-only.
+
+`script java 'println(currentProgram.getName());' --project PROJECT --program PROGRAM`
+runs Java statements inside a generated `GhidraScript.run()` method. Use fully
+qualified names for other types; use a script file for imports or class declarations.
+Script responses include `stdout` and `stderr` from Ghidra's `print`/`printerr`
+methods. Compilation/runtime errors fail the command; temporary inline sources
+are removed afterwards. Python execution remains unsupported. Script program
+changes commit on success and roll back on failure; external side effects are
+not rolled back.
+
+Run `python3 scripts/smoke-runtime.py --help` for the shared native/container
+regression checks. Use a new, isolated project path. Run the Rust suite with
+`cargo test -- --test-threads=1`; Ghidra integration checks must not be skipped.
 
 ## License
 

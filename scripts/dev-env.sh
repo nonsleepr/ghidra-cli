@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_GHIDRA_DIR="${ROOT_DIR}/../ghidra/build/dist/ghidra_12.2_DEV"
-DEFAULT_PROJECT_DIR="${HOME}/Library/Caches/ghidra-cli/projects"
+DEFAULT_PROJECT_DIR="${HOME}/ghidra-projects"
 
 resolve_java_home() {
   if [[ -n "${JAVA_HOME:-}" && -d "${JAVA_HOME}" ]]; then
@@ -29,11 +27,11 @@ resolve_java_home() {
 }
 
 setup_dev_env() {
-  GHIDRA_DIR="${GHIDRA_INSTALL_DIR:-${DEFAULT_GHIDRA_DIR}}"
+  GHIDRA_DIR="${GHIDRA_INSTALL_DIR:-}"
   PROJECT_DIR="${GHIDRA_PROJECT_DIR:-${DEFAULT_PROJECT_DIR}}"
 
   if [[ ! -d "${GHIDRA_DIR}" ]]; then
-    echo "Ghidra install dir not found: ${GHIDRA_DIR}" >&2
+    echo "Ghidra install dir not found: ${GHIDRA_DIR}. Use nix develop or set GHIDRA_INSTALL_DIR." >&2
     return 1
   fi
 
