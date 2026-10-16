@@ -89,7 +89,7 @@ jobs:
         shell: bash
 
       - name: Run mutation integration tests
-        run: cargo test --test comment_tests --test symbol_tests --test patch_tests --test type_tests --test script_tests --test signature_tests --test function_mutation_tests --verbose -- --nocapture --test-threads=1
+        run: cargo test --test comment_tests --test symbol_tests --test patch_tests --test type_tests --test script_tests --test signature_tests --test discovery_tests --test function_mutation_tests --verbose -- --nocapture --test-threads=1
         timeout-minutes: 30
         env:
           RUST_LOG: info

@@ -158,8 +158,69 @@ impl BridgeClient {
     }
 
     /// Get cross-references to all strings matching a pattern.
+    /// Versioned internal commands trigger CLI restart/retry for older bridges
+    /// instead of silently accepting flags they do not understand.
     pub fn string_refs(&self, pattern: String) -> Result<serde_json::Value> {
-        self.send_command("string_refs", Some(json!({"string": pattern})))
+        self.send_command("string_refs_v2", Some(json!({"string": pattern})))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn string_refs_discover(
+        &self,
+        pattern: &str,
+        discover: bool,
+        start: Option<&str>,
+        end: Option<&str>,
+        scan_bytes: u32,
+        limit: Option<usize>,
+    ) -> Result<serde_json::Value> {
+        self.send_command("string_refs_v2", Some(json!({"string": pattern, "discover": discover, "start": start, "end": end, "scan_bytes": scan_bytes, "limit": limit})))
+    }
+
+    pub fn find_string_options(
+        &self,
+        pattern: &str,
+        case_sensitive: bool,
+        limit: Option<usize>,
+    ) -> Result<serde_json::Value> {
+        self.send_command(
+            "find_string_v2",
+            Some(json!({"pattern": pattern, "case_sensitive": case_sensitive, "limit": limit})),
+        )
+    }
+
+    pub fn function_candidates(
+        &self,
+        address: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<serde_json::Value> {
+        self.send_command(
+            "function_candidates",
+            Some(json!({"address": address, "limit": limit})),
+        )
+    }
+
+    pub fn vtable_inspect(&self, address: &str, slots: u32) -> Result<serde_json::Value> {
+        self.send_command(
+            "vtable_inspect",
+            Some(json!({"address": address, "slots": slots})),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn disasm_preview(
+        &self,
+        address: &str,
+        count: Option<usize>,
+        end: Option<&str>,
+        bytes: Option<usize>,
+        resolve_strings: bool,
+        discover: bool,
+    ) -> Result<serde_json::Value> {
+        if !resolve_strings && !discover {
+            return self.disasm_range(address, count, end, bytes);
+        }
+        self.send_command("disasm_preview", Some(json!({"address": address, "count": count, "end": end, "bytes": bytes, "resolve_strings": resolve_strings, "discover": discover})))
     }
 
     /// Get cross-references from an address.
@@ -310,7 +371,7 @@ impl BridgeClient {
     }
 
     pub fn find_string(&self, pattern: &str) -> Result<serde_json::Value> {
-        self.send_command("find_string", Some(json!({"pattern": pattern})))
+        self.send_command("find_string_v2", Some(json!({"pattern": pattern})))
     }
 
     pub fn find_bytes(&self, hex: &str) -> Result<serde_json::Value> {

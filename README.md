@@ -392,6 +392,12 @@ This checks:
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
 
+## Static discovery
+
+Read-only string/reference discovery, annotated disassembly, ELF unwind candidates,
+and bounded ELF/Itanium vtable inspection are described in
+[Static discovery](docs/static-discovery.md), including supported forms and limits.
+
 ## Runtime compatibility and repairs
 
 Docker, the Nix package/development shell, and CI use Ghidra **12.1.4**, pinned by

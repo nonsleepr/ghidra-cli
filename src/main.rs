@@ -109,6 +109,7 @@ fn requires_bridge(command: &Commands) -> bool {
             | Commands::Query(_)
             | Commands::Decompile(_)
             | Commands::Function(_)
+            | Commands::Vtable(_)
             | Commands::Strings(_)
             | Commands::Memory(_)
             | Commands::Dump(_)
@@ -143,6 +144,7 @@ fn extract_project_from_command(command: &Commands) -> Option<String> {
         Commands::Decompile(args) => args.options.project.clone(),
         Commands::Function(cmd) => match cmd {
             cli::FunctionCommands::List(opts) => opts.project.clone(),
+            cli::FunctionCommands::Candidates(args) => args.options.project.clone(),
             cli::FunctionCommands::Decompile(args) => args.options.project.clone(),
             cli::FunctionCommands::Get(args) => args.options.project.clone(),
             cli::FunctionCommands::Disasm(args) => args.options.project.clone(),
@@ -159,6 +161,7 @@ fn extract_project_from_command(command: &Commands) -> Option<String> {
             cli::FunctionCommands::Body(args) => args.options.project.clone(),
             cli::FunctionCommands::SetBody(args) => args.project.clone(),
         },
+        Commands::Vtable(cli::VtableCommands::Inspect(args)) => args.options.project.clone(),
         Commands::Strings(cmd) => match cmd {
             cli::StringsCommands::List(opts) => opts.project.clone(),
             cli::StringsCommands::Refs(args) => args.options.project.clone(),
@@ -275,6 +278,7 @@ fn extract_program_from_command(command: &Commands) -> Option<String> {
         Commands::Decompile(args) => args.options.program.clone(),
         Commands::Function(cmd) => match cmd {
             cli::FunctionCommands::List(opts) => opts.program.clone(),
+            cli::FunctionCommands::Candidates(args) => args.options.program.clone(),
             cli::FunctionCommands::Decompile(args) => args.options.program.clone(),
             cli::FunctionCommands::Get(args) => args.options.program.clone(),
             cli::FunctionCommands::Disasm(args) => args.options.program.clone(),
@@ -291,6 +295,7 @@ fn extract_program_from_command(command: &Commands) -> Option<String> {
             cli::FunctionCommands::Body(args) => args.options.program.clone(),
             cli::FunctionCommands::SetBody(args) => args.program.clone(),
         },
+        Commands::Vtable(cli::VtableCommands::Inspect(args)) => args.options.program.clone(),
         Commands::Strings(cmd) => match cmd {
             cli::StringsCommands::List(opts) => opts.program.clone(),
             cli::StringsCommands::Refs(args) => args.options.program.clone(),
@@ -398,12 +403,14 @@ fn extract_query_options(command: &Commands) -> Option<QueryOptions> {
         Commands::Summary(args) => Some(args.options.clone()),
         Commands::Decompile(args) => Some(args.options.clone()),
         Commands::Disasm(args) => Some(args.options.clone()),
+        Commands::Vtable(cli::VtableCommands::Inspect(args)) => Some(args.options.clone()),
         Commands::Stats(args) => Some(args.options.clone()),
         Commands::Function(cmd) => match cmd {
             cli::FunctionCommands::List(opts) => Some(opts.clone()),
             cli::FunctionCommands::Get(args) => Some(args.options.clone()),
             cli::FunctionCommands::Decompile(args) => Some(args.options.clone()),
             cli::FunctionCommands::Disasm(args) => Some(args.options.clone()),
+            cli::FunctionCommands::Candidates(args) => Some(args.options.clone()),
             cli::FunctionCommands::Calls(args) => Some(args.options.clone()),
             cli::FunctionCommands::XRefs(args) => Some(args.options.clone()),
             cli::FunctionCommands::Delete(args) => Some(args.options.clone()),
@@ -535,7 +542,7 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
     // Import and Quick produce their own result and don't need execute_via_bridge.
     // Other commands (including Analyze) produce a result via execute_via_bridge.
     use serde_json::json;
-    let result = match &cli.command {
+    let mut result = match &cli.command {
         Commands::Import(args) => {
             let binary_path = PathBuf::from(&args.binary);
             if !binary_path.exists() {
@@ -702,6 +709,17 @@ fn run_with_bridge(cli: Cli) -> anyhow::Result<()> {
         }
     };
 
+    // Legacy find output stays JSONL rows. Detailed envelopes are explicit.
+    if let Commands::Find(cli::FindCommands::String(args)) = &cli.command {
+        if !args.details {
+            if let Some(search) = result.as_object_mut().and_then(|o| o.remove("search")) {
+                if search["truncated"].as_bool() == Some(true) {
+                    eprintln!("String search limited; use --details for scan coverage and limits.");
+                }
+            }
+        }
+    }
+
     // Check for .NET decompilation and warn
     if !cli.quiet {
         check_dotnet_decompile_warning(&cli.command, &result);
@@ -803,6 +821,9 @@ fn execute_via_bridge(
                     Some(json!({"address": args.resolved_target()})),
                 ),
                 FunctionCommands::Disasm(args) => client.disasm(args.resolved_target(), None),
+                FunctionCommands::Candidates(args) => {
+                    client.function_candidates(args.address.as_deref(), args.options.limit)
+                }
                 FunctionCommands::Calls(args) => client.find_calls(args.resolved_target()),
                 FunctionCommands::XRefs(args) => {
                     client.xrefs_to(args.resolved_target().to_string())
@@ -884,7 +905,17 @@ fn execute_via_bridge(
                 StringsCommands::List(opts) => {
                     client.list_strings(opts.limit.or(default_limit), opts.filter.clone())
                 }
-                StringsCommands::Refs(args) => client.string_refs(args.string.clone()),
+                StringsCommands::Refs(args) if !args.discover && args.options.limit.is_none() => {
+                    client.string_refs(args.string.clone())
+                }
+                StringsCommands::Refs(args) => client.string_refs_discover(
+                    &args.string,
+                    args.discover,
+                    args.scan.start.as_deref(),
+                    args.scan.end.as_deref(),
+                    args.scan.scan_bytes,
+                    args.options.limit,
+                ),
             }
         }
         Commands::Memory(cmd) => {
@@ -1058,7 +1089,16 @@ fn execute_via_bridge(
         Commands::Find(cmd) => {
             use cli::FindCommands;
             match cmd {
-                FindCommands::String(args) => client.find_string(&args.pattern),
+                FindCommands::String(args)
+                    if !args.case_sensitive && args.options.limit.is_none() =>
+                {
+                    client.find_string(&args.pattern)
+                }
+                FindCommands::String(args) => client.find_string_options(
+                    &args.pattern,
+                    args.case_sensitive,
+                    args.options.limit,
+                ),
                 FindCommands::Bytes(args) => client.find_bytes(&args.hex),
                 FindCommands::Function(args) => client.find_function(&args.pattern),
                 FindCommands::Calls(args) => client.find_calls(args.resolved_target()),
@@ -1100,11 +1140,16 @@ fn execute_via_bridge(
                 ScriptCommands::List => client.script_list(),
             }
         }
-        Commands::Disasm(args) => client.disasm_range(
+        Commands::Vtable(cli::VtableCommands::Inspect(args)) => {
+            client.vtable_inspect(&args.address, args.slots)
+        }
+        Commands::Disasm(args) => client.disasm_preview(
             args.resolved_target(),
             args.num_instructions,
             args.end.as_deref(),
             args.bytes,
+            args.resolve_strings,
+            args.discover,
         ),
         Commands::Batch(args) => {
             // Read batch file and execute each command locally

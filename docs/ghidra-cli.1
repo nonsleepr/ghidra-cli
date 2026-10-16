@@ -786,3 +786,29 @@ or execution errors fail the command. Python execution is unsupported.
 The default project directory is ~/ghidra-projects. Existing explicit settings
 are preserved; move old cache-based projects manually with their .gpr and .rep
 files together if changing directories.
+
+.SH STATIC DISCOVERY
+find string merges defined strings with printable UTF-8 memory runs.
+Use --case-sensitive for exact case and --details for an envelope containing
+coverage, limits, and truncation. Default output remains JSONL rows.
+.PP
+strings refs PATTERN --discover scans direct x86-64 operands without creating
+program metadata. Bound executable scanning with --start, --end, and
+--scan-bytes (default 1048576, maximum 67108864). Results distinguish recorded
+references from decoded candidates; missing function ownership remains unknown.
+.PP
+disasm --resolve-strings includes bounded, escaped string previews.
+Add --discover for direct x86-64 operand candidates and temporary instruction
+decoding. Existing operands and references are preserved.
+.PP
+function candidates --source unwind reads ELF .eh_frame_hdr and CIE/FDE ranges.
+Use --address ADDRESS to find covering ranges. Neighboring indexed starts are
+not treated as confirmed range ends; unsupported FDEs include a range error.
+.PP
+vtable inspect ADDRESS --slots N inspects a caller-supplied 64-bit ELF/Itanium
+address point. N is required and bounded to 1 through 512. Unknown slots are
+preserved. Automatic RTTI discovery and table-boundary inference are unsupported.
+.PP
+See docs/static-discovery.md for supported encodings, search limits, and
+completeness qualifications. These queries do not run analyzers or modify the
+program database.

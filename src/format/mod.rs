@@ -90,9 +90,24 @@ fn format_compact<T: Serialize>(data: &[T]) -> Result<String> {
                             .join(", "),
                         _ => String::new(),
                     };
+                    let previews = map
+                        .get("references")
+                        .and_then(|v| v.as_array())
+                        .map(|refs| {
+                            refs.iter()
+                                .filter_map(|r| r.get("string_preview")?.get("value")?.as_str())
+                                .map(|s| serde_json::to_string(s).unwrap_or_default())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let annotation = if previews.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ; {}", previews.join(", "))
+                    };
                     result.push_str(&format!(
-                        "{:<12} {:<16} {} {}\n",
-                        addr, bytes, mnem, operands
+                        "{:<12} {:<16} {} {}{}\n",
+                        addr, bytes, mnem, operands, annotation
                     ));
                     continue;
                 }
@@ -115,11 +130,12 @@ fn format_compact<T: Serialize>(data: &[T]) -> Result<String> {
                     parts.push(format!("({})", s));
                 }
                 if let Some(v) = value_str {
-                    if v.len() > 80 {
-                        parts.push(format!("\"{}...\"", &v[..77]));
+                    let preview = if v.chars().take(81).count() > 80 {
+                        format!("{}...", v.chars().take(77).collect::<String>())
                     } else {
-                        parts.push(format!("\"{}\"", v));
-                    }
+                        v.to_string()
+                    };
+                    parts.push(serde_json::to_string(&preview)?);
                 }
 
                 if parts.is_empty() {
@@ -213,6 +229,29 @@ mod tests {
         let formatter = DefaultFormatter;
         let result = formatter.format(&data, OutputFormat::Json).unwrap();
         assert!(result.contains("test"));
+    }
+
+    #[test]
+    fn string_rows_truncate_on_character_boundaries_and_escape_controls() {
+        let data = vec![json!({"address":"00402000", "value":format!("é\n{}", "é".repeat(90))})];
+        let output = DefaultFormatter
+            .format(&data, OutputFormat::Compact)
+            .unwrap();
+        assert_eq!(output.lines().count(), 1);
+        assert!(output.contains(r"é\n"));
+        assert!(output.contains("..."));
+    }
+
+    #[test]
+    fn disassembly_previews_escape_control_characters() {
+        let data = vec![
+            json!({"address":"00401000", "mnemonic":"LEA", "bytes":"488d15", "operands":["RDX"], "references":[{"string_preview":{"value":"line\n\"quoted\" café"}}]}),
+        ];
+        let output = DefaultFormatter
+            .format(&data, OutputFormat::Compact)
+            .unwrap();
+        assert_eq!(output.lines().count(), 1);
+        assert!(output.contains(r#"; "line\n\"quoted\" café""#));
     }
 
     #[test]

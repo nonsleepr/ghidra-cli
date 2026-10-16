@@ -875,8 +875,20 @@ fn test_strings_refs_returns_results() {
         .run();
 
     result.assert_success();
-    // Should not error; result is a valid JSON array
-    let _val: serde_json::Value = result.json();
+    let value: serde_json::Value = result.json();
+    let references = value["results"]
+        .as_array()
+        .expect("string reference results");
+    assert!(
+        !references.is_empty(),
+        "Hello has recorded references in the analyzed fixture: {value}"
+    );
+    assert!(references
+        .iter()
+        .all(|r| r["from"].is_string() && r["string_address"].is_string()));
+    assert!(references.iter().any(|r| r["string_value"]
+        .as_str()
+        .is_some_and(|s| s.contains("Hello"))));
 }
 
 /// B-4: dump exports --limit was ignored.

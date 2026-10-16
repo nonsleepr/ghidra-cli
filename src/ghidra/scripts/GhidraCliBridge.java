@@ -232,8 +232,12 @@ public class GhidraCliBridge extends GhidraScript {
             case "program_delete":  return handleProgramDelete(args);
             case "program_export":  return handleProgramExport(args);
             // Find commands
+            case "find_string_v2":
             case "find_string":     return handleFindString(args);
+            case "string_refs_v2":
             case "string_refs":     return handleStringRefs(args);
+            case "function_candidates": return handleFunctionCandidates(args);
+            case "vtable_inspect": return handleVtableInspect(args);
             case "find_bytes":      return handleFindBytes(args);
             case "find_function":   return handleFindFunction(args);
             case "find_calls":      return handleFindCalls(args);
@@ -293,6 +297,7 @@ public class GhidraCliBridge extends GhidraScript {
             case "patch_nop":       return handlePatchNop(args);
             case "patch_export":    return handlePatchExport(args);
             // Other commands
+            case "disasm_preview":
             case "disasm":          return handleDisasm(args);
             case "stats":           return handleStats();
             // Script commands
@@ -1609,136 +1614,540 @@ public class GhidraCliBridge extends GhidraScript {
 
     // --- Find Handlers ---
 
-    private JsonObject handleFindString(JsonObject args) {
-        if (currentProgram == null) return errorResult("No program loaded");
+    private static final int STRING_PREVIEW_BYTES = 4096;
+    private static final long STRING_SCAN_BYTES = 64L * 1024 * 1024;
 
-        String pattern = getArgString(args, "pattern");
-        if (pattern == null) pattern = "";
+    private boolean flag(JsonObject args, String name) {
+        return args != null && args.has(name) && !args.get(name).isJsonNull() && args.get(name).getAsBoolean();
+    }
 
-        try {
-            JsonArray results = new JsonArray();
+    private boolean containsText(String value, String pattern, boolean sensitive) {
+        return sensitive ? value.contains(pattern)
+            : value.toLowerCase(java.util.Locale.ROOT).contains(pattern.toLowerCase(java.util.Locale.ROOT));
+    }
 
-            // Phase 1: Search pre-analyzed string data types from the listing.
-            // This is fast and returns strings Ghidra's analyzer has already classified.
-            Listing listing = currentProgram.getListing();
-            DataIterator dataIter = listing.getDefinedData(true);
-
-            while (dataIter.hasNext()) {
-                Data data = dataIter.next();
-                if (data.hasStringValue()) {
-                    try {
-                        String val = data.getValue().toString();
-                        if (pattern.isEmpty() || val.toLowerCase().contains(pattern.toLowerCase())) {
-                            JsonObject item = new JsonObject();
-                            item.addProperty("address", data.getAddress().toString());
-                            item.addProperty("value", val);
-                            item.addProperty("length", data.getLength());
-                            results.add(item);
-                        }
-                    } catch (Exception e) { /* skip */ }
-                }
-            }
-
-            // Phase 2: If listing search found nothing and we have a pattern,
-            // fall back to raw memory scanning. This catches strings that Ghidra's
-            // analyzer didn't classify as string data types (common on PE binaries).
-            if (results.size() == 0 && !pattern.isEmpty()) {
-                Memory memory = currentProgram.getMemory();
-                byte[] searchBytes = pattern.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-
-                Address addr = memory.getMinAddress();
-                while (addr != null && results.size() < 100) {
-                    Address found = memory.findBytes(addr, searchBytes, null, true, monitor);
-                    if (found == null) break;
-
-                    // Try to extract the full null-terminated string at this address
-                    String extracted = extractStringAt(memory, found, 4096);
-                    if (extracted != null && !extracted.isEmpty()) {
-                        JsonObject item = new JsonObject();
-                        item.addProperty("address", found.toString());
-                        item.addProperty("value", extracted);
-                        item.addProperty("length", extracted.length());
-                        results.add(item);
-                    }
-
-                    addr = found.add(Math.max(1, extracted != null ? extracted.length() : 1));
-                }
-            }
-
-            JsonObject result = new JsonObject();
-            result.add("results", results);
-            result.addProperty("count", results.size());
-            return result;
-        } catch (Exception e) {
-            return errorResult("Failed to find strings: " + e.getMessage());
+    private static class StringHit {
+        Address address;
+        String value, source, encoding = "utf-8";
+        int length;
+        boolean terminated, truncated;
+        StringHit(Address address, String value, int length, String source, boolean terminated, boolean truncated) {
+            this.address = address; this.value = value; this.length = length; this.source = source;
+            this.terminated = terminated; this.truncated = truncated;
+        }
+        JsonObject json() {
+            JsonObject row = new JsonObject();
+            row.addProperty("address", address.toString()); row.addProperty("value", value);
+            row.addProperty("length", length); row.addProperty("source", source);
+            row.addProperty("encoding", encoding);
+            if (source.equals("defined")) row.add("terminated", JsonNull.INSTANCE); else row.addProperty("terminated", terminated);
+            row.addProperty("truncated", truncated);
+            return row;
         }
     }
 
-    /**
-     * Extract a printable string starting at the given address.
-     * Reads until a null byte, non-printable character, or maxLen is reached.
-     */
-    private String extractStringAt(Memory memory, Address addr, int maxLen) {
+    private StringHit definedStringHit(Data data, String value) {
+        StringHit hit = new StringHit(data.getAddress(), value, data.getLength(), "defined", false, false);
+        String charset = StringDataInstance.getStringDataInstance(data).getCharsetName();
+        hit.encoding = charset == null ? "unknown" : charset;
+        return hit;
+    }
+
+    private String decodeText(byte[] bytes) {
         try {
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < maxLen; i++) {
-                byte b = memory.getByte(addr.add(i));
-                if (b == 0) break;
-                if (b < 0x20 || b > 0x7e) break; // non-printable ASCII
-                sb.append((char) b);
+            return java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+        } catch (java.nio.charset.CharacterCodingException e) { return null; }
+    }
+
+    private boolean textByte(int b) { return b >= 32 && b != 127 || b == 9 || b == 10 || b == 13; }
+
+    private StringHit previewAt(Address address, int maximum) {
+        Memory memory = currentProgram.getMemory();
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        boolean terminated = false, truncated = false;
+        try {
+            for (int i = 0; i <= maximum; i++) {
+                int b = memory.getByte(address.addNoWrap(i)) & 255;
+                if (b == 0) { terminated = true; break; }
+                if (!textByte(b)) break;
+                if (i == maximum) { truncated = true; break; }
+                bytes.write(b);
             }
-            return sb.length() > 0 ? sb.toString() : null;
-        } catch (Exception e) {
-            return null;
+        } catch (Exception e) { /* a mapping boundary ends an unterminated preview */ }
+        byte[] raw = bytes.toByteArray();
+        String text = decodeText(raw);
+        // A bounded preview may end in the middle of a UTF-8 sequence.
+        if (truncated) for (int trim = 1; text == null && trim <= 3 && trim < raw.length; trim++)
+            text = decodeText(Arrays.copyOf(raw, raw.length - trim));
+        return text == null || text.isEmpty() ? null
+            : new StringHit(address, text, raw.length, "bytes", terminated, truncated);
+    }
+
+    private static class StringSearch {
+        java.util.TreeMap<Address, StringHit> hits = new java.util.TreeMap<>();
+        long scanned;
+        boolean truncated;
+    }
+
+    private StringSearch searchStrings(String pattern, boolean sensitive, int limit) throws Exception {
+        StringSearch found = new StringSearch();
+        Listing listing = currentProgram.getListing();
+        DataIterator data = listing.getDefinedData(true);
+        while (data.hasNext()) {
+            monitor.checkCancelled();
+            Data item = data.next();
+            if (!item.hasStringValue()) continue;
+            Object value = item.getValue();
+            if (value != null && containsText(value.toString(), pattern, sensitive)) {
+                found.hits.put(item.getAddress(), definedStringHit(item, value.toString()));
+                if (found.hits.size() > limit) { found.truncated = true; return found; }
+            }
         }
+        // Scan complete printable runs, rather than treating a substring match as
+        // the string base. Chunk boundaries do not terminate a run.
+        Memory memory = currentProgram.getMemory();
+        for (MemoryBlock block : memory.getBlocks()) {
+            if (!block.isInitialized()) continue;
+            ByteArrayOutputStream run = new ByteArrayOutputStream();
+            Address start = null;
+            boolean clipped = false;
+            long offset = 0;
+            while (offset < block.getSize()) {
+                monitor.checkCancelled();
+                if (found.scanned >= STRING_SCAN_BYTES) { found.truncated = true; return found; }
+                int size = (int)Math.min(65536, Math.min(block.getSize() - offset, STRING_SCAN_BYTES - found.scanned));
+                byte[] chunk = new byte[size];
+                int read = memory.getBytes(block.getStart().addNoWrap(offset), chunk);
+                if (read <= 0) break;
+                for (int i = 0; i < read; i++) {
+                    int b = chunk[i] & 255;
+                    if (textByte(b)) {
+                        if (start == null) start = block.getStart().addNoWrap(offset + i);
+                        if (run.size() < STRING_PREVIEW_BYTES) run.write(b); else clipped = true;
+                    } else if (start != null) {
+                        addStringRun(found, start, run, clipped, b == 0, pattern, sensitive);
+                        start = null; run.reset(); clipped = false;
+                        if (found.hits.size() > limit) { found.truncated = true; return found; }
+                    }
+                }
+                found.scanned += read; offset += read;
+            }
+            if (start != null) addStringRun(found, start, run, clipped, false, pattern, sensitive);
+        }
+        return found;
+    }
+
+    private void addStringRun(StringSearch found, Address start, ByteArrayOutputStream run,
+            boolean clipped, boolean terminated, String pattern, boolean sensitive) {
+        if (clipped) found.truncated = true;
+        String text = decodeText(run.toByteArray());
+        if (text == null || text.isEmpty() || !containsText(text, pattern, sensitive)) return;
+        Data defined = currentProgram.getListing().getDataContaining(start);
+        if (defined != null && defined.hasStringValue()) return;
+        found.hits.putIfAbsent(start, new StringHit(start, text, run.size(), "bytes", terminated, clipped));
+    }
+
+    private JsonObject handleFindString(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        try {
+            String pattern = getArgString(args, "pattern");
+            if (pattern == null || pattern.isEmpty()) return errorResult("String pattern required");
+            int limit = getArgInt(args, "limit", 1000);
+            if (limit < 1 || limit > 100000) return errorResult("limit must be between 1 and 100000");
+            StringSearch search = searchStrings(pattern, flag(args, "case_sensitive"), limit);
+            JsonArray rows = new JsonArray();
+            for (StringHit hit : search.hits.values()) { if (rows.size() == limit) break; rows.add(hit.json()); }
+            JsonObject result = new JsonObject(); result.add("results", rows); result.addProperty("count", rows.size());
+            JsonObject detail = new JsonObject(); detail.addProperty("sources", "defined-and-bytes");
+            detail.addProperty("raw_encoding", "utf-8"); detail.addProperty("bytes_scanned", search.scanned);
+            detail.addProperty("byte_budget", STRING_SCAN_BYTES); detail.addProperty("truncated", search.truncated || search.hits.size() > limit);
+            detail.addProperty("limitations", "Raw search covers printable UTF-8 runs up to 4096 bytes; UTF-16 requires defined string data. Termination is unknown for defined data.");
+            result.add("search", detail); return result;
+        } catch (Exception e) { return errorResult("Failed to find strings: " + e.getMessage()); }
+    }
+
+    /** Existing consumers also use this helper for ASCII-like memory previews. */
+    private String extractStringAt(Memory memory, Address addr, int maxLen) {
+        StringHit hit = previewAt(addr, maxLen);
+        return hit == null ? null : hit.value;
+    }
+
+    private boolean directDiscoverySupported() {
+        return currentProgram.getLanguageID().toString().startsWith("x86:LE:64:");
+    }
+
+    private java.util.Set<Address> decodedTargets(Instruction instruction) {
+        java.util.Set<Address> targets = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < instruction.getNumOperands(); i++) {
+            Address direct = instruction.getAddress(i);
+            if (direct != null) targets.add(direct);
+            for (Object operand : instruction.getOpObjects(i))
+                if (operand instanceof Address) targets.add((Address)operand);
+        }
+        // Sleigh represents RIP-relative LEA and absolute immediate moves as
+        // constant COPY p-code rather than Address operand objects. LOAD/STORE
+        // address inputs likewise expose direct memory operands. These are
+        // candidates, not proof that an immediate was intended as a pointer.
+        for (PcodeOp op : instruction.getPcode()) {
+            Varnode value = null;
+            if (op.getOpcode() == PcodeOp.COPY) value = op.getInput(0);
+            else if (op.getOpcode() == PcodeOp.LOAD || op.getOpcode() == PcodeOp.STORE) value = op.getInput(1);
+            if (value != null && value.isConstant()) {
+                Address target = currentProgram.getAddressFactory().getDefaultAddressSpace().getAddress(value.getOffset());
+                if (currentProgram.getMemory().contains(target)) targets.add(target);
+            }
+        }
+        return targets;
+    }
+
+    private JsonObject stringReference(StringHit hit, Address from, Address target, String type, String source) {
+        JsonObject row = new JsonObject();
+        row.addProperty("string_address", hit.address.toString()); row.addProperty("string_value", hit.value);
+        row.addProperty("from", from.toString()); row.addProperty("ref_type", type);
+        Function fn = currentProgram.getFunctionManager().getFunctionContaining(from);
+        row.addProperty("from_function", fn == null ? null : fn.getName());
+        row.addProperty("ownership", fn == null ? "unknown-no-containing-function" : "recorded-function");
+        row.addProperty("target_address", target.toString()); row.addProperty("interior_offset", target.subtract(hit.address));
+        row.addProperty("reference_source", source); return row;
+    }
+
+    private StringHit matchingHit(java.util.TreeMap<Address, StringHit> hits, Address target) {
+        java.util.Map.Entry<Address, StringHit> entry = hits.floorEntry(target);
+        if (entry == null) return null;
+        StringHit hit = entry.getValue();
+        if (!hit.address.getAddressSpace().equals(target.getAddressSpace())) return null;
+        long offset = target.subtract(hit.address);
+        return offset >= 0 && offset < hit.length ? hit : null;
     }
 
     private JsonObject handleStringRefs(JsonObject args) {
         if (currentProgram == null) return errorResult("No program loaded");
-
         String pattern = getArgString(args, "string");
         if (pattern == null || pattern.isEmpty()) return errorResult("String pattern required");
-
         try {
-            Listing listing = currentProgram.getListing();
-            ReferenceManager refMgr = currentProgram.getReferenceManager();
-            Memory memory = currentProgram.getMemory();
-            JsonArray results = new JsonArray();
-
-            // Find all defined strings matching the pattern
-            DataIterator dataIter = listing.getDefinedData(true);
-            while (dataIter.hasNext()) {
-                ghidra.program.model.listing.Data data = dataIter.next();
-                if (!data.hasStringValue()) continue;
-                String val = data.getDefaultValueRepresentation();
-                // strip surrounding quotes from representation
-                if (val != null && val.length() >= 2 && val.startsWith("\"") && val.endsWith("\"")) {
-                    val = val.substring(1, val.length() - 1);
-                }
-                if (val == null || !val.toLowerCase().contains(pattern.toLowerCase())) continue;
-
-                Address strAddr = data.getAddress();
-                for (Reference ref : refMgr.getReferencesTo(strAddr)) {
-                    JsonObject item = new JsonObject();
-                    item.addProperty("string_address", strAddr.toString());
-                    item.addProperty("string_value", val);
-                    item.addProperty("from", ref.getFromAddress().toString());
-                    item.addProperty("ref_type", ref.getReferenceType().toString());
-                    FunctionManager fm = currentProgram.getFunctionManager();
-                    Function fn = fm.getFunctionContaining(ref.getFromAddress());
-                    item.addProperty("from_function", fn != null ? fn.getName() : null);
-                    results.add(item);
+            boolean discover = flag(args, "discover");
+            if (discover && !directDiscoverySupported()) return errorResult("Decoded discovery supports x86-64 little-endian only");
+            int limit = getArgInt(args, "limit", 1000);
+            if (limit < 1 || limit > 100000) return errorResult("limit must be between 1 and 100000");
+            StringSearch search;
+            if (discover) search = searchStrings(pattern, false, 10000);
+            else {
+                search = new StringSearch();
+                DataIterator data = currentProgram.getListing().getDefinedData(true);
+                while (data.hasNext()) {
+                    Data item = data.next(); Object value = item.hasStringValue() ? item.getValue() : null;
+                    if (value != null && containsText(value.toString(), pattern, false))
+                        search.hits.put(item.getAddress(), definedStringHit(item, value.toString()));
                 }
             }
-
-            JsonObject result = new JsonObject();
-            result.add("results", results);
-            result.addProperty("count", results.size());
+            JsonArray rows = new JsonArray(); Set<String> seen = new HashSet<>(); boolean limited = false;
+            ReferenceManager refs = currentProgram.getReferenceManager();
+            for (StringHit hit : search.hits.values()) {
+                // Include interior references, not just references to the string base.
+                ghidra.program.model.address.AddressIterator destinations = refs.getReferenceDestinationIterator(
+                    new ghidra.program.model.address.AddressSet(hit.address, hit.address.addNoWrap(hit.length - 1)), true);
+                while (destinations.hasNext()) {
+                    Address target = destinations.next();
+                    for (Reference ref : refs.getReferencesTo(target)) {
+                        String key = ref.getFromAddress() + ":" + target;
+                        if (!seen.add(key)) continue;
+                        if (rows.size() >= limit) { limited = true; break; }
+                        rows.add(stringReference(hit, ref.getFromAddress(), target, ref.getReferenceType().toString(), "recorded"));
+                    }
+                }
+            }
+            JsonObject scope = new JsonObject(); JsonArray ranges = new JsonArray();
+            long scanned = 0; boolean scopeTruncated = false; int decodeFailures = 0;
+            if (discover) {
+                int budget = getArgInt(args, "scan_bytes", 1048576);
+                if (budget < 1 || budget > 67108864) return errorResult("scan_bytes must be between 1 and 67108864");
+                Address first = getArgString(args, "start") == null ? null : resolveAddress(getArgString(args, "start"));
+                Address last = getArgString(args, "end") == null ? null : resolveAddress(getArgString(args, "end"));
+                if (getArgString(args, "start") != null && first == null || getArgString(args, "end") != null && last == null)
+                    return errorResult("Invalid discovery address bound");
+                if (first != null && last != null && first.compareTo(last) > 0) return errorResult("start must not exceed end");
+                ghidra.app.util.PseudoDisassembler decoder = new ghidra.app.util.PseudoDisassembler(currentProgram);
+                for (MemoryBlock block : currentProgram.getMemory().getBlocks()) {
+                    if (!block.isExecute() || !block.isInitialized()) continue;
+                    Address begin = block.getStart(), end = block.getEnd();
+                    if (first != null && begin.compareTo(first) < 0) begin = first;
+                    if (last != null && end.compareTo(last) > 0) end = last;
+                    if (begin.compareTo(end) > 0) continue;
+                    if (scanned >= budget || rows.size() >= limit) { scopeTruncated = true; break; }
+                    Address cursor = begin; long inBlock = 0;
+                    while (cursor != null && cursor.compareTo(end) <= 0 && scanned < budget && rows.size() < limit) {
+                        monitor.checkCancelled();
+                        Instruction instruction = currentProgram.getListing().getInstructionAt(cursor);
+                        int length = 1;
+                        try {
+                            if (instruction == null) instruction = decoder.disassemble(cursor);
+                            if (instruction == null) throw new IOException("Undecodable instruction");
+                            length = instruction.getLength();
+                            if (length > end.subtract(cursor) + 1 || scanned + length > budget) break;
+                            for (Address target : decodedTargets(instruction)) {
+                                StringHit hit = matchingHit(search.hits, target);
+                                if (hit != null && seen.add(cursor + ":" + target)) {
+                                    if (rows.size() >= limit) { limited = true; break; }
+                                    rows.add(stringReference(hit, cursor, target, "DIRECT_OPERAND", "decoded"));
+                                }
+                            }
+                        } catch (Exception e) { decodeFailures++; }
+                        scanned += length; inBlock += length;
+                        cursor = cursor.equals(end) ? null : cursor.addNoWrap(length);
+                    }
+                    if (inBlock > 0) { JsonObject range = new JsonObject(); range.addProperty("start", begin.toString());
+                        range.addProperty("end", begin.addNoWrap(inBlock - 1).toString()); ranges.add(range); }
+                    if (cursor != null && cursor.compareTo(end) <= 0) scopeTruncated = true;
+                }
+                scope.addProperty("byte_budget", budget); scope.addProperty("bytes_scanned", scanned);
+                scope.add("ranges", ranges); scope.addProperty("decode_failures", decodeFailures);
+                scope.addProperty("truncated", scopeTruncated || limited || search.truncated);
+                scope.addProperty("limitations", "Linear executable scan; decoded operands are candidates. No register dataflow, pointer-chain, UTF-16 byte discovery, or exhaustive code-boundary recovery. Ownership requires a recorded function.");
+                scope.addProperty("string_bytes_scanned", search.scanned); scope.addProperty("string_search_truncated", search.truncated);
+            }
+            JsonObject result = new JsonObject(); result.add("results", rows); result.addProperty("count", rows.size());
             result.addProperty("pattern", pattern);
+            if (discover) result.add("discovery", scope);
+            else if (limited) result.addProperty("truncated", true);
             return result;
-        } catch (Exception e) {
-            return errorResult("Failed to find string refs: " + e.getMessage());
+        } catch (Exception e) { return errorResult("Failed to find string refs: " + e.getMessage()); }
+    }
+
+    // Read-only ELF unwind decoding. Never call the annotating GCC analyzer here.
+    private class EhReader {
+        Address at, end;
+        EhReader(Address at, Address end) { this.at = at; this.end = end; }
+        long raw(int size) throws Exception {
+            if (size < 1 || size > 8 || at.compareTo(end) > 0 || end.subtract(at) < size - 1)
+                throw new IOException("Unwind field exceeds its containing record");
+            byte[] bytes = new byte[size]; currentProgram.getMemory().getBytes(at, bytes);
+            long value = 0;
+            for (int i = 0; i < size; i++) {
+                int index = currentProgram.getLanguage().isBigEndian() ? i : size - 1 - i;
+                value = (value << 8) | (bytes[index] & 255L);
+            }
+            at = at.addNoWrap(size); return value;
         }
+        long leb(boolean signed) throws Exception {
+            long value = 0; int shift = 0, b;
+            do {
+                b = (int)raw(1);
+                int payload = b & 127;
+                if (shift == 63 && (signed ? payload != 0 && payload != 127 : payload > 1))
+                    throw new IOException("Overflow in unwind LEB128");
+                value |= (long)(b & 127) << shift; shift += 7;
+                if (shift >= 70 && (b & 128) != 0) throw new IOException("Overlong unwind LEB128");
+            } while ((b & 128) != 0);
+            if (signed && shift < 64 && (b & 64) != 0) value |= -1L << shift;
+            return value;
+        }
+        String cstring() throws Exception {
+            StringBuilder value = new StringBuilder();
+            for (int i = 0; i < 256; i++) { int b = (int)raw(1); if (b == 0) return value.toString(); value.append((char)b); }
+            throw new IOException("Unterminated CIE augmentation");
+        }
+        void skip(long size) throws Exception {
+            if (size < 0 || size > end.subtract(at) + 1) throw new IOException("Invalid unwind augmentation length");
+            at = at.addNoWrap(size);
+        }
+        long encoded(int encoding, Address dataBase, boolean addressValue) throws Exception {
+            if (encoding == 255) throw new IOException("Omitted unwind field");
+            int application = encoding & 112;
+            if (application == 80) {
+                if ((encoding & 15) != 0) throw new IOException("Aligned unwind encoding requires native pointers");
+                int pointerSize = currentProgram.getDefaultPointerSize();
+                long padding = (pointerSize - Long.remainderUnsigned(at.getOffset(), pointerSize)) % pointerSize;
+                skip(padding); application = 0;
+            }
+            Address field = at;
+            long value;
+            switch (encoding & 15) {
+                case 0: value = raw(currentProgram.getDefaultPointerSize()); break;
+                case 1: value = leb(false); break;
+                case 2: value = raw(2); break;
+                case 3: value = raw(4); break;
+                case 4: value = raw(8); break;
+                case 9: value = leb(true); break;
+                case 10: value = (short)raw(2); break;
+                case 11: value = (int)raw(4); break;
+                case 12: value = raw(8); break;
+                default: throw new IOException("Unsupported DWARF encoding 0x" + Integer.toHexString(encoding));
+            }
+            if (!addressValue && (application != 0 || (encoding & 128) != 0))
+                throw new IOException("Relative/indirect encoding is invalid for an unwind count or range");
+            Address base = null;
+            if (application == 16) base = field;
+            else if (application == 48) base = dataBase;
+            else if (application != 0) throw new IOException("Unsupported DWARF application 0x" + Integer.toHexString(application));
+            if (application == 48 && base == null) throw new IOException("No data-relative base for this unwind field");
+            if (base != null) value = base.addNoWrap(value).getOffset();
+            if ((encoding & 128) != 0) {
+                Address pointer = currentProgram.getAddressFactory().getDefaultAddressSpace().getAddress(value);
+                MemoryBlock block = currentProgram.getMemory().getBlock(pointer);
+                if (block == null) throw new IOException("Unmapped indirect unwind pointer");
+                value = new EhReader(pointer, block.getEnd()).raw(currentProgram.getDefaultPointerSize());
+            }
+            return value;
+        }
+    }
+
+    private Address unwindAddress(long value) {
+        return currentProgram.getAddressFactory().getDefaultAddressSpace().getAddress(value);
+    }
+
+    private EhReader unwindRecord(Address start) throws Exception {
+        MemoryBlock block = currentProgram.getMemory().getBlock(start);
+        if (block == null || !block.isInitialized()) throw new IOException("Unmapped unwind record");
+        EhReader reader = new EhReader(start, block.getEnd()); long length = reader.raw(4);
+        if (length == 0xffffffffL) length = reader.raw(8);
+        if (length < 4 || length > block.getEnd().subtract(reader.at) + 1)
+            throw new IOException("Invalid unwind record length");
+        reader.end = reader.at.addNoWrap(length - 1); return reader;
+    }
+
+    private int fdePointerEncoding(Address cieAddress) throws Exception {
+        EhReader cie = unwindRecord(cieAddress);
+        // DWARF64 uses an eight-byte CIE id; detect it from the initial length.
+        int idSize = currentProgram.getMemory().getInt(cieAddress) == -1 ? 8 : 4;
+        if (cie.raw(idSize) != 0) throw new IOException("FDE does not point to a CIE");
+        int version = (int)cie.raw(1);
+        if (version != 1 && version != 3 && version != 4) throw new IOException("Unsupported CIE version " + version);
+        String augmentation = cie.cstring();
+        if (version == 4 && (cie.raw(1) != currentProgram.getDefaultPointerSize() || cie.raw(1) != 0))
+            throw new IOException("Unsupported CIE address/segment size");
+        cie.leb(false); cie.leb(true);
+        if (version == 1) cie.raw(1); else cie.leb(false);
+        int encoding = 0;
+        if (augmentation.isEmpty()) return encoding;
+        if (!augmentation.startsWith("z")) throw new IOException("Unsupported CIE augmentation " + augmentation);
+        long length = cie.leb(false);
+        Address end = cie.at.addNoWrap(length);
+        if (length < 0 || length > cie.end.subtract(cie.at) + 1) throw new IOException("CIE augmentation exceeds record");
+        Address recordEnd = cie.end; cie.end = end.previous();
+        for (int i = 1; i < augmentation.length(); i++) switch (augmentation.charAt(i)) {
+            case 'L': cie.raw(1); break;
+            case 'R': encoding = (int)cie.raw(1); break;
+            case 'P': int personalityEncoding = (int)cie.raw(1); cie.encoded(personalityEncoding, null, true); break;
+            case 'S': break;
+            default: throw new IOException("Unsupported CIE augmentation " + augmentation);
+        }
+        cie.end = recordEnd; return encoding;
+    }
+
+    private Address[] fdeRange(Address address) throws Exception {
+        EhReader fde = unwindRecord(address);
+        int idSize = currentProgram.getMemory().getInt(address) == -1 ? 8 : 4;
+        Address ciePointerField = fde.at; long cieOffset = fde.raw(idSize);
+        if (cieOffset <= 0) throw new IOException("Invalid backward CIE offset");
+        int encoding = fdePointerEncoding(ciePointerField.subtractNoWrap(cieOffset));
+        Address start = unwindAddress(fde.encoded(encoding, null, true));
+        long length = fde.encoded(encoding & 15, null, false);
+        if (length <= 0) throw new IOException("Invalid FDE range length");
+        return new Address[]{start, start.addNoWrap(length)};
+    }
+
+    private JsonObject handleFunctionCandidates(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        if (!currentProgram.getExecutableFormat().contains("ELF")) return errorResult("Unwind candidates currently support ELF .eh_frame_hdr only");
+        try {
+            JsonObject result = new JsonObject(); JsonArray rows = new JsonArray();
+            result.add("results", rows); result.addProperty("source", "unwind");
+            result.addProperty("limitations", "ELF .eh_frame_hdr index plus CIE/FDE decoding; not a complete function inventory. Text-relative/function-relative encodings and legacy augmentations are unsupported.");
+            MemoryBlock block = currentProgram.getMemory().getBlock(".eh_frame_hdr");
+            if (block == null) { result.addProperty("count", 0); result.addProperty("available", false); return result; }
+            int limit = getArgInt(args, "limit", 1000);
+            if (limit < 1 || limit > 100000) return errorResult("limit must be between 1 and 100000");
+            Address lookup = getArgString(args, "address") == null ? null : resolveAddress(getArgString(args, "address"));
+            if (getArgString(args, "address") != null && lookup == null) return errorResult("Invalid lookup address");
+            EhReader header = new EhReader(block.getStart(), block.getEnd());
+            if (header.raw(1) != 1) throw new IOException("Unsupported .eh_frame_hdr version");
+            int frameEncoding = (int)header.raw(1), countEncoding = (int)header.raw(1), tableEncoding = (int)header.raw(1);
+            header.encoded(frameEncoding, block.getStart(), true);
+            long count = header.encoded(countEncoding, null, false);
+            if (count < 0 || count > 1000000) throw new IOException("Unwind table count exceeds supported bound");
+            if (tableEncoding == 255) throw new IOException("Unwind header has no search table");
+            List<Address[]> index = new ArrayList<>(); Address previous = null;
+            for (long i = 0; i < count; i++) {
+                monitor.checkCancelled();
+                Address start = unwindAddress(header.encoded(tableEncoding, block.getStart(), true));
+                Address fde = unwindAddress(header.encoded(tableEncoding, block.getStart(), true));
+                if (previous != null && previous.compareTo(start) > 0) throw new IOException("Unsorted unwind search table");
+                previous = start; index.add(new Address[]{start, fde});
+            }
+            boolean truncated = false;
+            for (int i = 0; i < index.size(); i++) {
+                monitor.checkCancelled(); Address start = index.get(i)[0], fde = index.get(i)[1];
+                if (lookup != null && start.compareTo(lookup) > 0) break;
+                JsonObject row = new JsonObject(); row.addProperty("start", start.toString());
+                row.addProperty("fde_address", fde.toString()); row.addProperty("source", ".eh_frame_hdr");
+                row.addProperty("table_encoding", String.format("0x%02x", tableEncoding));
+                row.addProperty("next_indexed_start", i + 1 < index.size() ? index.get(i + 1)[0].toString() : null);
+                try {
+                    Address[] range = fdeRange(fde);
+                    if (!range[0].equals(start)) throw new IOException("FDE start disagrees with header index");
+                    row.addProperty("range_start", range[0].toString()); row.addProperty("range_end_exclusive", range[1].toString());
+                    row.addProperty("range_source", "fde");
+                    if (lookup != null && (lookup.compareTo(range[0]) < 0 || lookup.compareTo(range[1]) >= 0)) continue;
+                } catch (Exception e) {
+                    row.addProperty("range_error", e.getMessage());
+                    // A start is still useful evidence, but never guess an interval from its neighbor.
+                    if (lookup != null && !lookup.equals(start)) continue;
+                }
+                Function fn = currentProgram.getFunctionManager().getFunctionAt(start);
+                row.addProperty("function", fn == null ? null : fn.getName());
+                if (rows.size() >= limit) { truncated = true; break; }
+                rows.add(row);
+            }
+            result.addProperty("available", true); result.addProperty("indexed_entries", count);
+            result.addProperty("count", rows.size()); result.addProperty("truncated", truncated); return result;
+        } catch (Exception e) { return errorResult("Failed to read unwind candidates: " + e.getMessage()); }
+    }
+
+    private JsonObject handleVtableInspect(JsonObject args) {
+        if (currentProgram == null) return errorResult("No program loaded");
+        if (!currentProgram.getExecutableFormat().contains("ELF") || currentProgram.getDefaultPointerSize() != 8)
+            return errorResult("Vtable inspection currently supports 64-bit ELF/Itanium address points only");
+        try {
+            Address point = resolveAddress(getArgString(args, "address"));
+            int slots = getArgInt(args, "slots", 0);
+            if (point == null || slots < 1 || slots > 512) return errorResult("A valid address and 1..512 slots are required");
+            Memory memory = currentProgram.getMemory();
+            long offsetToTop = memory.getLong(point.subtractNoWrap(16));
+            long typeinfoValue = memory.getLong(point.subtractNoWrap(8));
+            JsonObject result = new JsonObject(); result.addProperty("abi", "elf-itanium-64");
+            result.addProperty("address_point", point.toString()); result.addProperty("offset_to_top", offsetToTop);
+            result.addProperty("typeinfo_address", typeinfoValue == 0 ? null : unwindAddress(typeinfoValue).toString());
+            JsonArray warnings = new JsonArray();
+            warnings.add("The caller supplies the address point and slot count; table membership and boundaries are not inferred.");
+            if (typeinfoValue != 0) try {
+                Address typeinfo = unwindAddress(typeinfoValue);
+                Address nameAddress = unwindAddress(memory.getLong(typeinfo.addNoWrap(8)));
+                StringHit name = previewAt(nameAddress, 256);
+                result.addProperty("typeinfo_name_address", nameAddress.toString());
+                result.addProperty("typeinfo_name", name == null ? null : name.value);
+                if (name == null || !name.terminated) warnings.add("RTTI name is unreadable or not terminated within the preview bound.");
+            } catch (Exception e) { warnings.add("RTTI header/name is unreadable: " + e.getMessage()); }
+            JsonArray methods = new JsonArray();
+            for (int i = 0; i < slots; i++) {
+                monitor.checkCancelled(); JsonObject row = new JsonObject(); Address slot = point.addNoWrap(i * 8L);
+                row.addProperty("index", i); row.addProperty("slot_address", slot.toString());
+                try {
+                    long value = memory.getLong(slot); Address target = unwindAddress(value);
+                    row.addProperty("target", target.toString()); MemoryBlock mapped = memory.getBlock(target);
+                    row.addProperty("status", value == 0 ? "null" : mapped == null ? "unmapped" : mapped.isExecute() ? "executable" : "non-executable");
+                    Function fn = currentProgram.getFunctionManager().getFunctionAt(target);
+                    Symbol symbol = currentProgram.getSymbolTable().getPrimarySymbol(target);
+                    row.addProperty("function", fn == null ? null : fn.getName());
+                    row.addProperty("symbol", symbol == null ? null : symbol.getName());
+                    row.addProperty("recorded_thunk", fn != null && fn.isThunk());
+                } catch (Exception e) { row.addProperty("status", "unreadable"); row.addProperty("error", e.getMessage()); }
+                methods.add(row);
+            }
+            result.add("slots", methods); result.add("warnings", warnings); return result;
+        } catch (Exception e) { return errorResult("Failed to inspect vtable: " + e.getMessage()); }
     }
 
     private JsonObject handleFindBytes(JsonObject args) {
@@ -4001,6 +4410,25 @@ public class GhidraCliBridge extends GhidraScript {
         }
     }
 
+    private void addStringPreview(JsonObject reference, Address target) {
+        if (target == null) return;
+        Data defined = currentProgram.getListing().getDataContaining(target);
+        if (defined != null && defined.hasStringValue() && defined.getValue() != null) {
+            String value = defined.getValue().toString();
+            int end = Math.min(value.length(), 256);
+            // Do not cut between a UTF-16 surrogate pair.
+            if (end > 0 && end < value.length() && Character.isHighSurrogate(value.charAt(end - 1))) end--;
+            JsonObject preview = new JsonObject(); preview.addProperty("value", value.substring(0, end));
+            preview.addProperty("address", defined.getAddress().toString()); preview.addProperty("source", "defined");
+            preview.addProperty("encoding", StringDataInstance.getStringDataInstance(defined).getCharsetName()); preview.add("terminated", JsonNull.INSTANCE);
+            preview.addProperty("truncated", end < value.length()); preview.addProperty("interior_offset", target.subtract(defined.getAddress()));
+            reference.add("string_preview", preview);
+        } else {
+            StringHit hit = previewAt(target, 256);
+            if (hit != null && hit.value.codePointCount(0, hit.value.length()) >= 4) reference.add("string_preview", hit.json());
+        }
+    }
+
     // --- Disasm Handler ---
 
     private JsonObject handleDisasm(JsonObject args) {
@@ -4019,6 +4447,9 @@ public class GhidraCliBridge extends GhidraScript {
         }
 
         try {
+            boolean previews = flag(args, "resolve_strings"), discover = flag(args, "discover");
+            if (discover && !directDiscoverySupported()) return errorResult("Decoded discovery supports x86-64 little-endian only");
+            ghidra.app.util.PseudoDisassembler decoder = discover ? new ghidra.app.util.PseudoDisassembler(currentProgram) : null;
             // Use resolveAddress which handles 0x prefix and symbol lookup
             Address addr = resolveAddress(addressStr);
             if (addr == null) return errorResult("Invalid address: " + addressStr);
@@ -4045,6 +4476,7 @@ public class GhidraCliBridge extends GhidraScript {
                 }
             }
 
+            if (instruction == null && discover) instruction = decoder.disassemble(addr);
             if (instruction == null) {
                 return errorResult("No instruction at address " + addressStr +
                     ". Address may be data or unanalyzed code.");
@@ -4098,6 +4530,24 @@ public class GhidraCliBridge extends GhidraScript {
                     references.add(refData);
                 }
 
+                if (previews) {
+                    Set<Address> seenTargets = new HashSet<>();
+                    for (JsonElement element : references) {
+                        JsonObject ref = element.getAsJsonObject();
+                        Address target = resolveAddress(ref.get("to_address").getAsString());
+                        if (target != null) seenTargets.add(target);
+                        ref.addProperty("reference_source", "recorded");
+                        addStringPreview(ref, target);
+                    }
+                    if (discover) for (Address target : decodedTargets(current)) {
+                        if (!seenTargets.add(target)) continue;
+                        JsonObject ref = new JsonObject(); ref.addProperty("to_address", target.toString());
+                        ref.addProperty("ref_type", "DIRECT_OPERAND"); ref.addProperty("reference_source", "decoded");
+                        Symbol symbol = symbolTable.getPrimarySymbol(target);
+                        ref.addProperty("symbol", symbol == null ? null : symbol.getName());
+                        addStringPreview(ref, target); references.add(ref);
+                    }
+                }
                 JsonObject instrData = new JsonObject();
                 instrData.addProperty("address", instrAddr.toString());
                 instrData.addProperty("bytes", bytesHex.toString());
@@ -4107,12 +4557,25 @@ public class GhidraCliBridge extends GhidraScript {
                 results.add(instrData);
 
                 bytesConsumed += byteArray.length;
-                current = current.getNext();
+                if (discover) {
+                    Address next = instrAddr.addNoWrap(byteArray.length);
+                    MemoryBlock block = currentProgram.getMemory().getBlock(next);
+                    if (block == null || !block.isExecute() || endAddr != null && next.compareTo(endAddr) > 0
+                            || maxBytes != null && bytesConsumed >= maxBytes || i + 1 >= count) break;
+                    current = listing.getInstructionAt(next);
+                    if (current == null) {
+                        try { current = decoder.disassemble(next); }
+                        catch (Exception e) { break; }
+                    }
+                } else current = current.getNext();
             }
 
             JsonObject result = new JsonObject();
             result.add("instructions", results);
             result.addProperty("count", results.size());
+            if (discover) for (JsonElement element : results) {
+                element.getAsJsonObject().addProperty("discovery_support", "x86-64 direct operands; linear decode; no register dataflow or pointer chains");
+            }
             if (results.size() > 0) {
                 result.addProperty("start_address",
                     results.get(0).getAsJsonObject().get("address").getAsString());

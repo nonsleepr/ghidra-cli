@@ -259,7 +259,7 @@ jobs:
         shell: bash
 
       - name: Run mutation integration tests
-        run: cargo test --test comment_tests --test symbol_tests --test patch_tests --test type_tests --test script_tests --test signature_tests --test function_mutation_tests --verbose -- --nocapture --test-threads=1
+        run: cargo test --test comment_tests --test symbol_tests --test patch_tests --test type_tests --test script_tests --test signature_tests --test discovery_tests --test function_mutation_tests --verbose -- --nocapture --test-threads=1
         timeout-minutes: 80
         env:
           RUST_LOG: info
@@ -342,6 +342,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build fixture
         run: rustc --edition 2021 -o tests/fixtures/sample_binary tests/fixtures/sample_binary.rs
+      - name: Build static discovery fixture
+        run: |
+          rustc --edition 2021 tests/fixtures/discovery_fixture.rs -o /tmp/discovery-fixture
+          /tmp/discovery-fixture tests/fixtures/discovery.elf
       - name: Build pinned runtime
         run: docker build -t ghidra-cli:ci .
       - name: Test persistent container
@@ -353,6 +357,10 @@ jobs:
             -v "$PWD/tests/fixtures/runtime-scripts:/smoke:ro" ghidra-cli:ci infinity
           python3 scripts/smoke-runtime.py --project /projects/smoke \
             --fixture /binaries/sample_binary --script /smoke/RuntimeProbe.java \
+            -- docker exec ghidra-cli-ci ghidra-cli
+          docker exec ghidra-cli-ci /opt/ghidra/current/support/analyzeHeadless \
+            /projects discovery -import /binaries/discovery.elf -noanalysis
+          python3 scripts/smoke-discovery.py --project /projects/discovery \
             -- docker exec ghidra-cli-ci ghidra-cli
           docker rm -f ghidra-cli-ci
           docker run -d --name ghidra-cli-ci --entrypoint sleep \

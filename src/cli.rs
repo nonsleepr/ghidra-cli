@@ -37,6 +37,10 @@ pub enum Commands {
     #[command(subcommand, alias = "fn", alias = "func", alias = "functions")]
     Function(FunctionCommands),
 
+    /// Inspect ELF/Itanium vtable slots without modifying the program
+    #[command(subcommand)]
+    Vtable(VtableCommands),
+
     /// String operations
     #[command(subcommand, alias = "string", alias = "str")]
     Strings(StringsCommands),
@@ -299,6 +303,8 @@ pub enum FunctionCommands {
     /// List all functions
     #[command(alias = "ls")]
     List(QueryOptions),
+    /// Read function candidates from ELF unwind metadata
+    Candidates(FunctionCandidatesArgs),
     /// Get function details
     #[command(alias = "show", alias = "detail")]
     Get(FunctionGetArgs),
@@ -581,6 +587,11 @@ pub enum StringsCommands {
 #[derive(Args, Clone, Serialize, Deserialize, Debug)]
 pub struct StringRefsArgs {
     pub string: String,
+    /// Decode direct x86-64 references without creating instructions or references
+    #[arg(long)]
+    pub discover: bool,
+    #[command(flatten)]
+    pub scan: DiscoveryScanArgs,
     #[command(flatten)]
     pub options: QueryOptions,
 }
@@ -1003,7 +1014,12 @@ pub enum FindCommands {
 
 #[derive(Args, Clone, Serialize, Deserialize, Debug)]
 pub struct FindStringArgs {
+    /// Preserve the result envelope with search limits and encoding details
+    #[arg(long)]
+    pub details: bool,
     pub pattern: String,
+    #[arg(long)]
+    pub case_sensitive: bool,
     #[command(flatten)]
     pub options: QueryOptions,
 }
@@ -1118,6 +1134,12 @@ impl DecompileArgs {
 
 #[derive(Args, Clone, Serialize, Deserialize, Debug)]
 pub struct DisasmArgs {
+    /// Include bounded UTF-8 string previews at referenced addresses
+    #[arg(long)]
+    pub resolve_strings: bool,
+    /// Include direct decoded x86-64 operands as candidate references
+    #[arg(long, requires = "resolve_strings")]
+    pub discover: bool,
     /// Disassembly target (name | 0xaddr | FUN_<hex>)
     #[arg(value_name = "TARGET", required_unless_present = "target")]
     pub positional_target: Option<String>,
@@ -1401,4 +1423,45 @@ mod tests {
             _ => panic!("expected function get command"),
         }
     }
+}
+
+/// A byte budget applies across executable blocks, in address order.
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct DiscoveryScanArgs {
+    /// First executable address to scan (inclusive)
+    #[arg(long, requires = "discover")]
+    pub start: Option<String>,
+    /// Last executable address to scan (inclusive)
+    #[arg(long, requires = "discover")]
+    pub end: Option<String>,
+    /// Maximum executable bytes to inspect
+    #[arg(long, default_value_t = 1_048_576, value_parser = clap::value_parser!(u32).range(1..=67_108_864))]
+    pub scan_bytes: u32,
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct FunctionCandidatesArgs {
+    #[arg(long, default_value = "unwind", value_parser = ["unwind"])]
+    pub source: String,
+    /// Return only FDE ranges covering this address
+    #[arg(long)]
+    pub address: Option<String>,
+    #[command(flatten)]
+    pub options: QueryOptions,
+}
+
+#[derive(Subcommand, Clone, Serialize, Deserialize, Debug)]
+pub enum VtableCommands {
+    /// ADDRESS is the address point (first method slot), not the table header
+    Inspect(VtableInspectArgs),
+}
+
+#[derive(Args, Clone, Serialize, Deserialize, Debug)]
+pub struct VtableInspectArgs {
+    pub address: String,
+    /// Number of pointer slots to inspect; does not infer table boundaries
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=512))]
+    pub slots: u32,
+    #[command(flatten)]
+    pub options: QueryOptions,
 }

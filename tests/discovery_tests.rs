@@ -1,0 +1,363 @@
+//! Deterministic stripped ELF fixture: no compiler, proprietary data, or analyzer needed.
+use serde_json::Value;
+use std::path::PathBuf;
+#[path = "fixtures/discovery_fixture.rs"]
+mod fixture;
+#[macro_use]
+mod common;
+
+struct Probe {
+    _directory: tempfile::TempDir,
+    project: PathBuf,
+}
+impl Probe {
+    fn new() -> Self {
+        Self::new_variant(false)
+    }
+    fn new_variant(big_endian: bool) -> Self {
+        require_ghidra!();
+        let directory = tempfile::Builder::new()
+            .prefix("ghidra-discovery-")
+            .tempdir()
+            .unwrap();
+        let binary = directory.path().join("discovery.elf");
+        fixture::write(&binary, big_endian);
+        let install = ghidra_cli::config::Config::load()
+            .unwrap()
+            .get_ghidra_install_dir()
+            .unwrap();
+        let headless = ghidra_cli::ghidra::bridge::find_headless_script(&install).unwrap();
+        let output = std::process::Command::new(headless)
+            .arg(directory.path())
+            .arg("probe")
+            .arg("-import")
+            .arg(&binary)
+            .arg("-noanalysis")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let project = directory.path().join("probe");
+        Self {
+            _directory: directory,
+            project,
+        }
+    }
+    fn run(&self, args: &[&str]) -> std::process::Output {
+        assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
+            .arg("--json")
+            .args(args)
+            .arg("--project")
+            .arg(&self.project)
+            .args(["--program", "discovery.elf"])
+            .output()
+            .unwrap()
+    }
+    fn ok(&self, args: &[&str]) -> Value {
+        let out = self.run(args);
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|e| panic!("{args:?}: {e}: {}", String::from_utf8_lossy(&out.stdout)))
+    }
+    fn java(&self, code: &str) -> String {
+        self.ok(&["script", "java", code])["stdout"]
+            .as_str()
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+    fn unchanged_marker(&self) -> String {
+        self.java("println(Long.toString(currentProgram.getModificationNumber())); println(Long.toString(currentProgram.getListing().getNumInstructions())); println(Long.toString(currentProgram.getReferenceManager().getReferenceCountTo(toAddr(0x402000L))));")
+    }
+}
+impl Drop for Probe {
+    fn drop(&mut self) {
+        let _ = assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
+            .args(["stop", "--project"])
+            .arg(&self.project)
+            .output();
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn discovery_on_unanalyzed_elf_is_bounded_and_read_only() {
+    let p = Probe::new();
+    let before = p.unchanged_marker();
+    let strings = p.ok(&["find", "string", "DISCOVERYNEEDLE", "--details"]);
+    assert_eq!(strings["count"], 3);
+    assert_eq!(strings["search"]["truncated"], false);
+    assert!(strings["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["value"] == "another discoveryneedle café"));
+    assert_eq!(strings["results"][0]["address"], "00402000");
+    assert_eq!(
+        p.ok(&[
+            "find",
+            "string",
+            "DISCOVERYNEEDLE",
+            "--case-sensitive",
+            "--details"
+        ])["count"],
+        0
+    );
+    assert_eq!(p.ok(&["strings", "refs", "DiscoveryNeedle"])["count"], 0);
+    let found = p.ok(&[
+        "strings",
+        "refs",
+        "DiscoveryNeedle",
+        "--discover",
+        "--start",
+        "0x401000",
+        "--end",
+        "0x40103f",
+    ]);
+    let rows = found["results"].as_array().unwrap();
+    let rows: Vec<_> = rows
+        .iter()
+        .filter(|v| v["reference_source"] == "decoded")
+        .collect();
+    assert_eq!(rows.len(), 3, "{found}");
+    assert!(rows.iter().any(|v| v["from_function"].is_null()), "{found}");
+    assert!(rows
+        .iter()
+        .filter(|v| v["from_function"].is_null())
+        .all(|v| v["ownership"] == "unknown-no-containing-function"));
+    assert!(rows.iter().any(|v| v["interior_offset"] == 7));
+    assert_eq!(found["discovery"]["truncated"], false);
+    let bounded = p.ok(&[
+        "strings",
+        "refs",
+        "DiscoveryNeedle",
+        "--discover",
+        "--start",
+        "0x401000",
+        "--end",
+        "0x40103f",
+        "--scan-bytes",
+        "7",
+    ]);
+    assert!(bounded["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["from"] == "00401000"));
+    assert_eq!(bounded["discovery"]["truncated"], true);
+    let output = p.run(&[
+        "disasm",
+        "0x401000",
+        "-n",
+        "1",
+        "--resolve-strings",
+        "--discover",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let instruction: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        instruction["references"][0]["string_preview"]["value"],
+        "Prefix DiscoveryNeedle Tail"
+    );
+    assert_eq!(instruction["references"][0]["reference_source"], "decoded");
+    let candidate = p.ok(&["function", "candidates", "--address", "0x401003"]);
+    assert_eq!(candidate["count"], 1, "{candidate}");
+    assert_eq!(candidate["results"][0]["range_end_exclusive"], "00401008");
+    assert_eq!(candidate["results"][0]["next_indexed_start"], "00401020");
+    assert_eq!(
+        p.ok(&["function", "candidates", "--address", "0x401010"])["count"],
+        0
+    );
+    assert_eq!(
+        p.ok(&["function", "candidates", "--limit", "1"])["truncated"],
+        true
+    );
+    let table = p.ok(&["vtable", "inspect", "0x405050", "--slots", "5"]);
+    assert_eq!(table["typeinfo_name"], "12FixtureClass");
+    assert_eq!(table["slots"].as_array().unwrap().len(), 5);
+    assert_eq!(table["slots"][2]["status"], "null");
+    assert_eq!(table["slots"][4]["status"], "unmapped");
+    assert_eq!(
+        p.ok(&["vtable", "inspect", "0x405090", "--slots", "1"])["offset_to_top"],
+        -16
+    );
+    assert_eq!(
+        p.unchanged_marker(),
+        before,
+        "Discovery changed the program"
+    );
+
+    assert!(assert_cmd::cargo::cargo_bin_cmd!("ghidra-cli")
+        .args(["stop", "--project"])
+        .arg(&p.project)
+        .output()
+        .unwrap()
+        .status
+        .success());
+    assert_eq!(p.java("println(String.valueOf(getInstructionAt(toAddr(0x401010L)))); println(String.valueOf(getDataAt(toAddr(0x402040L))));"), "null\nnull");
+
+    // Explicitly define just one duplicate; raw and defined results must merge.
+    p.java("createAsciiString(toAddr(0x402000L));");
+    let mixed = p.ok(&["find", "string", "discoveryneedle", "--details"]);
+    assert_eq!(mixed["count"], 3);
+    assert_eq!(mixed["results"][0]["source"], "defined");
+    let legacy = p.run(&["find", "string", "discoveryneedle"]);
+    assert!(legacy.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&legacy.stdout)
+            .lines()
+            .filter(|s| !s.trim().is_empty())
+            .count(),
+        3
+    );
+    assert_eq!(
+        p.ok(&[
+            "find",
+            "string",
+            "discoveryneedle",
+            "--details",
+            "--limit",
+            "1"
+        ])["search"]["truncated"],
+        true
+    );
+
+    // Add one recorded reference, then ensure discovery deduplicates it.
+    p.java("currentProgram.getReferenceManager().addMemoryReference(toAddr(0x401000L), toAddr(0x402000L), ghidra.program.model.symbol.RefType.DATA, ghidra.program.model.symbol.SourceType.USER_DEFINED, 1);");
+    assert!(
+        p.ok(&["strings", "refs", "DiscoveryNeedle"])["count"]
+            .as_u64()
+            .unwrap()
+            >= 1
+    );
+    let mixed_refs = p.ok(&[
+        "strings",
+        "refs",
+        "DiscoveryNeedle",
+        "--discover",
+        "--start",
+        "0x401000",
+        "--end",
+        "0x40103f",
+    ]);
+    assert_eq!(
+        mixed_refs["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|v| v["from"].as_str().is_some_and(|s| !s.contains("::")))
+            .count(),
+        3
+    );
+    assert_eq!(mixed_refs["results"][0]["reference_source"], "recorded");
+
+    // Corruption is an explicit error, not a guessed range or a bridge crash.
+    p.java("setByte(toAddr(0x404003L), (byte)0x77);");
+    assert!(!p.run(&["function", "candidates"]).status.success());
+    p.java("setByte(toAddr(0x404003L), (byte)0x3b); currentProgram.setImageBase(currentProgram.getImageBase().add(0x100000L), true);");
+    let rebased = p.ok(&["function", "candidates", "--address", "0x501003"]);
+    assert_eq!(
+        rebased["results"][0]["range_start"], "00501000",
+        "{rebased}"
+    );
+    assert_eq!(rebased["results"][0]["range_end_exclusive"], "00501008");
+    let rebased_refs = p.ok(&[
+        "strings",
+        "refs",
+        "DiscoveryNeedle",
+        "--discover",
+        "--start",
+        "0x501000",
+        "--end",
+        "0x50103f",
+    ]);
+    assert_eq!(
+        rebased_refs["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|v| v["from"].as_str().is_some_and(|s| !s.contains("::")))
+            .count(),
+        3
+    );
+    assert!(!p
+        .run(&[
+            "strings",
+            "refs",
+            "x",
+            "--discover",
+            "--start",
+            "0x501040",
+            "--end",
+            "0x501000"
+        ])
+        .status
+        .success());
+    assert!(!p
+        .run(&["vtable", "inspect", "0xdead0000", "--slots", "1"])
+        .status
+        .success());
+    assert!(p.ok(&["program", "info"])["name"].is_string());
+    p.java(r#"setBytes(toAddr(0x5020a0L), "WideNeedle".getBytes(java.nio.charset.StandardCharsets.UTF_16LE)); currentProgram.getListing().createData(toAddr(0x5020a0L), new ghidra.program.model.data.UnicodeDataType(), 22);"#);
+    let wide = p.ok(&["find", "string", "WideNeedle", "--details"]);
+    assert_eq!(wide["count"], 1);
+    assert!(wide["results"][0]["encoding"]
+        .as_str()
+        .unwrap()
+        .starts_with("UTF-16"));
+    p.java("currentProgram.getMemory().createInitializedBlock(\"LongUtf8\", toAddr(0x506000L), 5000L, (byte)65, monitor, false);");
+    let long = p.ok(&["find", "string", "missing-pattern", "--details"]);
+    assert_eq!(long["count"], 0);
+    assert_eq!(
+        long["search"]["truncated"], true,
+        "Long unsearched tails must be reported"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn unwind_endianness_encodings_absence_and_unsupported_discovery() {
+    let p = Probe::new_variant(true);
+    let found = p.ok(&["function", "candidates", "--address", "0x401003"]);
+    assert_eq!(
+        found["results"][0]["range_end_exclusive"], "00401008",
+        "{found}"
+    );
+    assert_eq!(
+        p.ok(&["vtable", "inspect", "0x405090", "--slots", "1"])["offset_to_top"],
+        -16
+    );
+    let unsupported = p.run(&["strings", "refs", "Needle", "--discover"]);
+    assert!(!unsupported.status.success());
+    assert!(String::from_utf8_lossy(&unsupported.stderr).contains("x86-64"));
+    // Same index using ULEB128 count and data-relative signed 16-bit entries.
+    p.java("setByte(toAddr(0x404002L), (byte)1); setByte(toAddr(0x404003L), (byte)0x3a); setByte(toAddr(0x404008L), (byte)2); setShort(toAddr(0x404009L), (short)-0x3000); setShort(toAddr(0x40400bL), (short)-0xfec); setShort(toAddr(0x40400dL), (short)-0x2fe0); setShort(toAddr(0x40400fL), (short)-0xfd8);");
+    let short = p.ok(&["function", "candidates", "--address", "0x401023"]);
+    assert_eq!(
+        short["results"][0]["range_end_exclusive"], "00401028",
+        "{short}"
+    );
+    // Reject an unsupported CIE encoding without inventing a range end.
+    p.java("setByte(toAddr(0x403010L), (byte)0x77);");
+    let unsupported = p.ok(&["function", "candidates", "--address", "0x401000"]);
+    assert!(unsupported["results"][0]["range_error"].is_string());
+    assert!(unsupported["results"][0]["range_end_exclusive"].is_null());
+    p.java(
+        r#"currentProgram.getMemory().getBlock(".eh_frame_hdr").setName("renamed-unwind-header");"#,
+    );
+    let absent = p.ok(&["function", "candidates"]);
+    assert_eq!(absent["available"], false);
+    assert_eq!(absent["count"], 0);
+}
